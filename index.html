@@ -106,7 +106,7 @@ a { color: var(--accent); }
       <label class="opt"><input type="checkbox" id="o_rotate" checked><span><span data-i18n="o_rotate"></span><small data-i18n="o_rotate_d"></small></span></label>
       <label class="opt"><input type="checkbox" id="o_detours" checked><span><span data-i18n="o_detours"></span><small><span data-i18n="o_detours_d"></span> <input type="number" id="o_detourMax" value="3" step="0.5" min="0"> mm</small></span></label>
       <label class="opt wide"><span class="indent" style="flex:1"><span data-i18n="o_remove"></span> <b id="o_removeShortV"></b>
-        <input type="range" id="o_removeShort" min="0" max="2" step="0.1" value="0">
+        <input type="range" id="o_removeShort" min="0" max="2" step="0.1" value="0.8">
         <small data-i18n="o_remove_d"></small></span></label>
       <label class="opt"><input type="checkbox" id="o_reorder" checked><span><span data-i18n="o_reorder"></span><small data-i18n="o_reorder_d"></small></span></label>
       <label class="opt"><input type="checkbox" id="o_reverse" checked><span><span data-i18n="o_reverse"></span><small data-i18n="o_reverse_d"></small></span></label>
@@ -1134,7 +1134,7 @@ const OPT = (() => {
   };
   let lang = 'en';
   try { lang = localStorage.getItem('gto-lang') || ''; } catch (e) { lang = ''; }
-  if (!I18N[lang]) lang = (navigator.language || '').toLowerCase().startsWith('de') ? 'de' : 'en';
+  if (!I18N[lang]) lang = 'en'; // default language, a saved choice wins
   const t = (k, vars) => {
     let s = (I18N[lang][k] !== undefined ? I18N[lang][k] : I18N.en[k]) ?? k;
     if (vars) for (const v in vars) s = s.split('{' + v + '}').join(vars[v]);

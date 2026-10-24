@@ -48,6 +48,19 @@ Only slicers other than PrusaSlicer were tested with converted files rather than
 2. Drop a `.gcode` or `.bgcode` file onto the page.
 3. Click **Optimize**, check the preview, then download the result.
 
+## Source code
+
+The tool is a single self-contained `index.html`, so that it also works offline. To make the code easier to read, the same code is also copied into separate files in [`src/`](src):
+
+| File | Contents |
+|---|---|
+| [`src/optimizer.js`](src/optimizer.js) | G-code parser and the travel optimization (loop rotation, detours, reordering) |
+| [`src/bgcode.js`](src/bgcode.js) | Reading and writing Prusa binary G-code (heatshrink, MeatPack, CRC32) |
+| [`src/app.js`](src/app.js) | User interface, preview and translations |
+| [`src/style.css`](src/style.css) | Styles |
+
+The copies are for reading only. The page always runs from `index.html`.
+
 ## License
 
 Public domain ([Unlicense](LICENSE)). Do whatever you want with it. There is no warranty, so use it at your own risk.
@@ -93,6 +106,10 @@ Ausserdem unterstützt:
 - relative Positionierung (G91)
 
 Nur die Slicer ausser PrusaSlicer wurden mit umgewandelten statt echten Dateien getestet. **Das Ergebnis vor dem Druck immer in der G-Code-Vorschau des Slicers prüfen.** Wenn eine Datei nicht funktioniert, freue ich mich über ein Issue.
+
+### Quellcode
+
+Das Tool ist eine einzige, eigenständige `index.html`, damit es auch offline funktioniert. Damit der Code leichter zu lesen ist, liegt derselbe Code zusätzlich als einzelne Dateien in [`src/`](src): `optimizer.js` (Parser und Optimierung), `bgcode.js` (Prusa Binary-G-Code), `app.js` (Oberfläche, Vorschau, Übersetzungen) und `style.css`. Diese Kopien sind nur zum Lesen da. Die Seite läuft immer aus der `index.html`.
 
 ### Lizenz
 

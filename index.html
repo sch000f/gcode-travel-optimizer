@@ -1,0 +1,1403 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>G-Code Travel Optimizer</title>
+<meta name="description" content="Reduce travel moves and stringing in G-code (PrusaSlicer, OrcaSlicer, Bambu Studio, Cura, Simplify3D, Prusa .bgcode). Runs locally in the browser.">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns=%27http://www.w3.org/2000/svg%27 viewBox=%270 0 32 32%27%3E%3Cpath d=%27M5 26 C9 6 23 6 27 26%27 fill=%27none%27 stroke=%27%232f6fed%27 stroke-width=%273%27 stroke-linecap=%27round%27/%3E%3Ccircle cx=%275%27 cy=%2726%27 r=%273%27 fill=%27%232c9a52%27/%3E%3C/svg%3E">
+<style>
+:root {
+  --bg: #f6f5f2; --panel: #ffffff; --ink: #1d1d1b; --muted: #6b6a66; --line: #e3e1db;
+  --accent: #2f6fed; --accent-ink: #ffffff; --ext: #8a8a86; --travel: #e5484d; --start: #2c9a52; --warn: #b4560b;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #161615; --panel: #1f1f1d; --ink: #ecebe7; --muted: #9c9b96; --line: #33322f;
+    --accent: #5b8cff; --accent-ink: #0d0d0c; --ext: #77766f; --travel: #ff6369; --start: #46c06f; --warn: #f0a050;
+  }
+}
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--bg); color: var(--ink); font: 15px/1.5 system-ui, -apple-system, "Segoe UI", sans-serif; }
+main { max-width: 980px; margin: 0 auto; padding: 28px 16px 60px; }
+h1 { font-size: 22px; margin: 0 0 4px; letter-spacing: -0.01em; }
+.sub { color: var(--muted); margin: 0 0 22px; }
+.card { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 18px; margin-bottom: 16px; }
+.card h2 { font-size: 13px; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); margin: 0 0 12px; font-weight: 600; }
+#drop { border: 2px dashed var(--line); border-radius: 10px; padding: 26px; text-align: center; cursor: pointer; transition: border-color .15s; }
+#drop.over, #drop:hover { border-color: var(--accent); }
+#drop b { display: block; font-size: 16px; margin-bottom: 4px; }
+#drop span { color: var(--muted); font-size: 13px; }
+#fileinfo { margin-top: 10px; font-size: 13px; color: var(--muted); min-height: 1.5em; }
+.opts { display: grid; grid-template-columns: 1fr 1fr; gap: 10px 24px; }
+@media (max-width: 700px) { .opts { grid-template-columns: 1fr; } }
+.opt { display: flex; gap: 10px; align-items: flex-start; font-size: 14px; }
+.opt input[type=checkbox] { margin-top: 4px; accent-color: var(--accent); }
+.opt small { display: block; color: var(--muted); font-size: 12.5px; }
+.opt input[type=number] { width: 70px; padding: 3px 6px; border: 1px solid var(--line); border-radius: 6px; background: var(--bg); color: var(--ink); font: inherit; }
+details { margin-top: 12px; font-size: 14px; }
+summary { cursor: pointer; color: var(--muted); }
+.actions { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; margin-top: 16px; }
+button { font: inherit; padding: 8px 16px; border-radius: 8px; border: 1px solid var(--line); background: var(--panel); color: var(--ink); cursor: pointer; }
+button.primary { background: var(--accent); color: var(--accent-ink); border-color: var(--accent); font-weight: 600; }
+button:disabled { opacity: .45; cursor: default; }
+#status { font-size: 13px; color: var(--muted); }
+#status.err { color: var(--travel); }
+.stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 10px; }
+@media (max-width: 700px) { .stats { grid-template-columns: 1fr 1fr; } }
+.stat { border: 1px solid var(--line); border-radius: 8px; padding: 10px 12px; }
+.stat .k { font-size: 12px; color: var(--muted); }
+.stat .v { font-size: 20px; font-weight: 600; font-variant-numeric: tabular-nums; }
+.stat .v s { color: var(--muted); font-weight: 400; font-size: 15px; margin-right: 6px; text-decoration: none; }
+table { width: 100%; border-collapse: collapse; font-size: 13.5px; font-variant-numeric: tabular-nums; }
+th, td { text-align: right; padding: 5px 8px; border-bottom: 1px solid var(--line); }
+th:first-child, td:first-child { text-align: left; }
+th { color: var(--muted); font-weight: 500; }
+tbody tr { cursor: pointer; }
+tbody tr:hover { background: var(--bg); }
+.tablewrap { max-height: 260px; overflow: auto; }
+.prevhead { display: flex; gap: 14px; align-items: center; margin-bottom: 4px; font-size: 14px; }
+#llabel { text-align: center; font-size: 14px; margin-bottom: 10px; font-variant-numeric: tabular-nums; min-height: 1.5em; }
+.prevhead input[type=range] { flex: 1; min-width: 160px; accent-color: var(--accent); }
+.canv { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+@media (max-width: 700px) { .canv { grid-template-columns: 1fr; } }
+.canv figure { margin: 0; border: 1px solid var(--line); border-radius: 8px; overflow: hidden; }
+.canv figcaption { font-size: 12.5px; color: var(--muted); padding: 6px 10px; border-bottom: 1px solid var(--line); display: flex; justify-content: space-between; }
+canvas { display: block; width: 100%; aspect-ratio: 1 / 1; background: var(--panel); }
+.legend { display: flex; gap: 16px; font-size: 12.5px; color: var(--muted); margin-top: 8px; flex-wrap: wrap; }
+.legend i { display: inline-block; width: 14px; height: 3px; vertical-align: middle; margin-right: 5px; }
+.note { font-size: 13px; color: var(--muted); margin: 10px 0 0; }
+.hidden { display: none; }
+.top { display: flex; justify-content: space-between; align-items: center; gap: 12px; }
+.lang { display: flex; border: 1px solid var(--line); border-radius: 8px; overflow: hidden; flex: none; }
+.lang button { border: 0; border-radius: 0; padding: 5px 11px; font-size: 13px; background: var(--panel); color: var(--muted); }
+.lang button.on { background: var(--accent); color: var(--accent-ink); font-weight: 600; }
+.opt.wide { grid-column: 1 / -1; }
+.indent { padding-left: 23px; }
+#o_removeShort { width: 100%; accent-color: var(--accent); margin-top: 4px; display: block; }
+#fileinfo { white-space: pre-line; }
+.about { font-size: 14px; }
+.about p { margin: 0 0 10px; }
+.about ul { margin: 0 0 10px; padding-left: 20px; }
+.foot { font-size: 12.5px; color: var(--muted); text-align: center; }
+a { color: var(--accent); }
+</style>
+</head>
+<body>
+<main>
+  <div class="top">
+    <h1>G-Code Travel Optimizer</h1>
+    <div class="lang" role="group" aria-label="Language">
+      <button data-lang="en">EN</button><button data-lang="de">DE</button>
+    </div>
+  </div>
+  <p class="sub" data-i18n="sub"></p>
+
+  <section class="card">
+    <h2 data-i18n="h_file"></h2>
+    <div id="drop"><b data-i18n="drop"></b><span data-i18n="drop_sub"></span></div>
+    <input type="file" id="file" accept=".gcode,.bgcode,.gco,.g" class="hidden">
+    <div id="fileinfo"></div>
+  </section>
+
+  <section class="card">
+    <h2 data-i18n="h_opts"></h2>
+    <div class="opts">
+      <label class="opt"><input type="checkbox" id="o_rotate" checked><span><span data-i18n="o_rotate"></span><small data-i18n="o_rotate_d"></small></span></label>
+      <label class="opt"><input type="checkbox" id="o_detours" checked><span><span data-i18n="o_detours"></span><small><span data-i18n="o_detours_d"></span> <input type="number" id="o_detourMax" value="3" step="0.5" min="0"> mm</small></span></label>
+      <label class="opt wide"><span class="indent" style="flex:1"><span data-i18n="o_remove"></span> <b id="o_removeShortV"></b>
+        <input type="range" id="o_removeShort" min="0" max="2" step="0.1" value="0">
+        <small data-i18n="o_remove_d"></small></span></label>
+      <label class="opt"><input type="checkbox" id="o_reorder" checked><span><span data-i18n="o_reorder"></span><small data-i18n="o_reorder_d"></small></span></label>
+      <label class="opt"><input type="checkbox" id="o_reverse" checked><span><span data-i18n="o_reverse"></span><small data-i18n="o_reverse_d"></small></span></label>
+      <label class="opt"><span class="indent"><span data-i18n="o_minret"></span> <input type="number" id="o_minRetract" value="1.5" step="0.1" min="0"> mm<small data-i18n="o_minret_d"></small></span></label>
+      <label class="opt"><input type="checkbox" id="o_dropLayerRetract"><span><span data-i18n="o_droplr"></span><small data-i18n="o_droplr_d"></small></span></label>
+    </div>
+    <details>
+      <summary data-i18n="advanced"></summary>
+      <div class="opts" style="margin-top:10px">
+        <label class="opt"><span><span data-i18n="o_close"></span> <input type="number" id="o_closeTol" value="0.3" step="0.05" min="0"> mm</span></label>
+        <label class="opt"><span><span data-i18n="o_gain"></span> <input type="number" id="o_minGain" value="1" step="0.5" min="0"> mm</span></label>
+        <label class="opt"><span><span data-i18n="o_rotmin"></span> <input type="number" id="o_rotateMin" value="0.2" step="0.1" min="0"> mm</span></label>
+        <label class="opt"><span><span data-i18n="o_pen"></span> <input type="number" id="o_penalty" value="1" step="0.5" min="0"> mm</span></label>
+      </div>
+    </details>
+    <div class="actions">
+      <button class="primary" id="run" disabled data-i18n="run"></button>
+      <button id="dl" disabled data-i18n="dl"></button>
+      <button id="dlg" disabled data-i18n="dlg"></button>
+      <span id="status"></span>
+    </div>
+  </section>
+
+  <section class="card hidden" id="res">
+    <h2 data-i18n="h_res"></h2>
+    <div class="stats" id="stats"></div>
+    <p class="note" id="paramnote"></p>
+  </section>
+
+  <section class="card hidden" id="layers">
+    <h2 data-i18n="h_layers"></h2>
+    <div class="tablewrap"><table><thead><tr><th>Layer</th><th data-i18n="th_tb"></th><th data-i18n="th_after"></th><th data-i18n="th_nb"></th><th data-i18n="th_after"></th><th data-i18n="th_rem"></th></tr></thead><tbody id="tbody"></tbody></table></div>
+  </section>
+
+  <section class="card hidden" id="prev">
+    <h2 data-i18n="h_prev"></h2>
+    <div class="prevhead">
+      <button id="lprev" aria-label="previous layer">‹</button>
+      <input type="range" id="lslider" min="1" max="1" value="1">
+      <button id="lnext" aria-label="next layer">›</button>
+    </div>
+    <div id="llabel"></div>
+    <div class="canv">
+      <figure><figcaption><span>Original</span><span id="cap0"></span></figcaption><canvas id="c0" width="800" height="800"></canvas></figure>
+      <figure><figcaption><span data-i18n="optimized"></span><span id="cap1"></span></figcaption><canvas id="c1" width="800" height="800"></canvas></figure>
+    </div>
+    <div class="legend"><span><i style="background:var(--ext)"></i>Extrusion</span><span><i style="background:var(--travel)"></i>Travel</span><span><i style="background:var(--start);height:8px;width:8px;border-radius:50%"></i><span data-i18n="lg_start"></span></span></div>
+  </section>
+
+  <section class="card">
+    <h2 data-i18n="h_about"></h2>
+    <div class="about" data-i18n-html="about"></div>
+  </section>
+  <p class="foot" data-i18n-html="foot"></p>
+</main>
+
+<script>
+// ---------- Binary G-code (Prusa .bgcode) read / write ----------
+const BG = (() => {
+  const CRC_TABLE = (() => {
+    const t = new Uint32Array(256);
+    for (let n = 0; n < 256; n++) {
+      let c = n;
+      for (let k = 0; k < 8; k++) c = c & 1 ? 0xEDB88320 ^ (c >>> 1) : c >>> 1;
+      t[n] = c >>> 0;
+    }
+    return t;
+  })();
+  function crc32(bufs) {
+    let c = 0xFFFFFFFF;
+    for (const b of bufs) for (let i = 0; i < b.length; i++) c = CRC_TABLE[(c ^ b[i]) & 0xFF] ^ (c >>> 8);
+    return (c ^ 0xFFFFFFFF) >>> 0;
+  }
+
+  function heatshrinkDecode(src, outSize, w) {
+    const out = new Uint8Array(outSize);
+    let o = 0, bitPos = 0;
+    const totalBits = src.length * 8;
+    const bits = (n) => {
+      let v = 0;
+      for (let i = 0; i < n; i++) {
+        v = (v << 1) | ((src[bitPos >> 3] >> (7 - (bitPos & 7))) & 1);
+        bitPos++;
+      }
+      return v;
+    };
+    while (o < outSize && bitPos < totalBits) {
+      if (bits(1)) {
+        if (bitPos + 8 > totalBits) break;
+        out[o++] = bits(8);
+      } else {
+        if (bitPos + w + 4 > totalBits) break;
+        const off = bits(w) + 1, cnt = bits(4) + 1;
+        for (let i = 0; i < cnt && o < outSize; i++, o++) out[o] = out[o - off];
+      }
+    }
+    return out;
+  }
+
+  // Greedy LZSS compatible with heatshrink (window 2^w, lookahead 2^4)
+  function heatshrinkEncode(src, w) {
+    const win = 1 << w, maxLen = 16;
+    const out = [];
+    let acc = 0, nb = 0;
+    const put = (v, n) => {
+      for (let i = n - 1; i >= 0; i--) {
+        acc = (acc << 1) | ((v >> i) & 1);
+        if (++nb === 8) { out.push(acc); acc = 0; nb = 0; }
+      }
+    };
+    const HB = 14, head = new Int32Array(1 << HB).fill(-1), prev = new Int32Array(src.length);
+    const hash = (i) => ((src[i] << 6) ^ (src[i + 1] << 3) ^ src[i + 2]) & ((1 << HB) - 1);
+    const insert = (i) => { if (i + 2 < src.length) { const h = hash(i); prev[i] = head[h]; head[h] = i; } };
+    let i = 0;
+    while (i < src.length) {
+      let bestLen = 0, bestOff = 0;
+      if (i + 2 < src.length) {
+        let cand = head[hash(i)], tries = 64;
+        while (cand >= 0 && i - cand <= win && tries--) {
+          let l = 0;
+          while (l < maxLen && i + l < src.length && src[cand + l] === src[i + l]) l++;
+          if (l > bestLen) { bestLen = l; bestOff = i - cand; if (l === maxLen) break; }
+          cand = prev[cand];
+        }
+      }
+      if (bestLen >= 3) {
+        put(0, 1); put(bestOff - 1, w); put(bestLen - 1, 4);
+        for (let k = 0; k < bestLen; k++) insert(i + k);
+        i += bestLen;
+      } else {
+        put(1, 1); put(src[i], 8); insert(i); i++;
+      }
+    }
+    if (nb) out.push(acc << (8 - nb));
+    return new Uint8Array(out);
+  }
+
+  // MeatPack decoding (port of libbgcode unbinarize)
+  function meatpackDecode(src) {
+    const out = [];
+    let unbin = false, nospace = false, cmdActive = false, cmdCount = 0, fullQ = 0, charBuf = 0;
+    const getChar = (c) => c < 10 ? 48 + c : [46, nospace ? 69 : 32, 10, 71, 88][c - 10];
+    const emit = (c) => out.push(c);
+    const inner = (c) => {
+      if (!unbin) { emit(c); return; }
+      if (fullQ > 0) {
+        emit(c);
+        if (charBuf > 0) { emit(charBuf); charBuf = 0; }
+        fullQ--;
+        return;
+      }
+      const lo = c & 0xF, hi = (c >> 4) & 0xF;
+      if (lo === 0xF) {
+        fullQ++;
+        if (hi === 0xF) fullQ++; else charBuf = getChar(hi);
+      } else {
+        const c0 = getChar(lo);
+        emit(c0);
+        if (c0 !== 10) { if (hi === 0xF) fullQ++; else emit(getChar(hi)); }
+      }
+    };
+    for (let i = 0; i < src.length; i++) {
+      const c = src[i];
+      if (c === 0xFF) {
+        if (cmdCount > 0) { cmdActive = true; cmdCount = 0; } else cmdCount++;
+      } else if (cmdActive) {
+        if (c === 251) unbin = true;
+        else if (c === 250 || c === 249) unbin = false;
+        else if (c === 247) nospace = true;
+        else if (c === 246) nospace = false;
+        cmdActive = false;
+      } else {
+        if (cmdCount > 0) { inner(0xFF); cmdCount = 0; }
+        inner(c);
+      }
+    }
+    return new Uint8Array(out);
+  }
+
+  // Reinsert spaces between G-line parameters (MeatPack no-space mode drops them)
+  function respace(text) {
+    return text.replace(/^G[^\n;]*/gm, (m) => m.replace(/([\d.])([A-Z])/g, '$1 $2'));
+  }
+
+  async function inflate(data) {
+    const s = new Blob([data]).stream().pipeThrough(new DecompressionStream('deflate'));
+    return new Uint8Array(await new Response(s).arrayBuffer());
+  }
+
+  async function parse(buf) {
+    const u8 = new Uint8Array(buf), dv = new DataView(u8.buffer, u8.byteOffset, u8.byteLength);
+    if (String.fromCharCode(...u8.slice(0, 4)) !== 'GCDE') throw new Error('ERR_NOT_BGCODE');
+    const version = dv.getUint32(4, true), checksumType = dv.getUint16(8, true);
+    const csLen = checksumType === 1 ? 4 : 0;
+    let p = 10;
+    const blocks = [];
+    const dec = new TextDecoder();
+    let gcode = '';
+    while (p < u8.length) {
+      const start = p;
+      const type = dv.getUint16(p, true), comp = dv.getUint16(p + 2, true), usize = dv.getUint32(p + 4, true);
+      p += 8;
+      let csize = usize;
+      if (comp !== 0) { csize = dv.getUint32(p, true); p += 4; }
+      const paramLen = type === 5 ? 6 : 2;
+      const param = dv.getUint16(p, true);
+      p += paramLen;
+      const data = u8.subarray(p, p + csize);
+      p += csize + csLen;
+      const raw = u8.subarray(start, p);
+      if (type === 1) {
+        let d;
+        if (comp === 0) d = data;
+        else if (comp === 2 || comp === 3) d = heatshrinkDecode(data, usize, comp === 2 ? 11 : 12);
+        else if (comp === 1) d = await inflate(data);
+        else throw new Error('ERR_COMPRESSION');
+        if (param === 1 || param === 2) d = meatpackDecode(d);
+        gcode += dec.decode(d);
+        blocks.push({ type, gcodePlaceholder: true });
+      } else {
+        blocks.push({ type, raw });
+      }
+    }
+    let meta = '';
+    for (const b of blocks) {
+      if (b.type !== 0) continue;
+      const dv0 = new DataView(b.raw.buffer, b.raw.byteOffset, b.raw.byteLength);
+      if (dv0.getUint16(2, true) === 0) meta += dec.decode(b.raw.subarray(10, 10 + dv0.getUint32(4, true)));
+    }
+    let config = '';
+    for (const b of blocks) {
+      if (b.type !== 2) continue;
+      const dv2 = new DataView(b.raw.buffer, b.raw.byteOffset, b.raw.byteLength);
+      const c = dv2.getUint16(2, true);
+      try {
+        if (c === 0) config = dec.decode(b.raw.subarray(10, 10 + dv2.getUint32(4, true)));
+        else if (c === 1) config = dec.decode(await inflate(b.raw.subarray(14, 14 + dv2.getUint32(8, true))));
+      } catch (e) { /* config is optional */ }
+    }
+    return { version, checksumType, blocks, config, meta, gcode: respace(gcode).replace(/\n{2,}/g, '\n') };
+  }
+
+  function build(parsed, gcode, blockSize = 65536) {
+    const enc = new TextEncoder();
+    const parts = [];
+    const head = new Uint8Array(10), hdv = new DataView(head.buffer);
+    head.set([71, 67, 68, 69]);
+    hdv.setUint32(4, parsed.version, true);
+    hdv.setUint16(8, parsed.checksumType, true);
+    parts.push(head);
+    let gcodeDone = false;
+    const gcodeBlocks = () => {
+      const bytes = enc.encode(gcode);
+      let s = 0;
+      while (s < bytes.length) {
+        let e = Math.min(s + blockSize, bytes.length);
+        if (e < bytes.length) { while (e > s && bytes[e - 1] !== 10) e--; if (e === s) e = Math.min(s + blockSize, bytes.length); }
+        const chunk = bytes.subarray(s, e);
+        const comp = heatshrinkEncode(chunk, 12);
+        const h = new Uint8Array(14), dv = new DataView(h.buffer);
+        dv.setUint16(0, 1, true); dv.setUint16(2, 3, true);
+        dv.setUint32(4, chunk.length, true); dv.setUint32(8, comp.length, true);
+        dv.setUint16(12, 0, true);
+        parts.push(h, comp);
+        if (parsed.checksumType === 1) {
+          const c = new Uint8Array(4); new DataView(c.buffer).setUint32(0, crc32([h, comp]), true); parts.push(c);
+        }
+        s = e;
+      }
+    };
+    for (const b of parsed.blocks) {
+      if (b.type === 1) { if (!gcodeDone) { gcodeBlocks(); gcodeDone = true; } }
+      else parts.push(b.raw);
+    }
+    return new Blob(parts, { type: 'application/octet-stream' });
+  }
+
+  return { parse, build, heatshrinkDecode, heatshrinkEncode, meatpackDecode, crc32 };
+})();
+
+</script>
+<script>
+// ---------- Travel optimizer ----------
+const OPT = (() => {
+  const dist = (a, b) => Math.hypot(a[0] - b[0], a[1] - b[1]);
+  const fmt = (v, d) => {
+    let s = v.toFixed(d);
+    if (s.indexOf('.') >= 0) s = s.replace(/0+$/, '').replace(/\.$/, '');
+    if (s.startsWith('0.')) s = s.slice(1);
+    else if (s.startsWith('-0.')) s = '-' + s.slice(2);
+    if (s === '-0' || s === '' || s === '-') s = '0';
+    return s;
+  };
+  const MOVE_TYPES = new Set(['ext', 'travel', 'wipe', 'retract', 'unretract', 'z', 'f']);
+  // feature-type comments: PrusaSlicer/SuperSlicer/Orca/Cura/ideaMaker (;TYPE:), Bambu/Orca (; FEATURE:), Simplify3D (; feature)
+  const TYPE_RE = /^;\s*(TYPE:|FEATURE:|feature )/;
+  // layer markers, in order of preference (a file may contain several kinds)
+  const LAYER_MARKERS = [
+    { id: 'prusa', re: /^;LAYER_CHANGE\b/ },          // PrusaSlicer, SuperSlicer, OrcaSlicer
+    { id: 'bambu', re: /^; CHANGE_LAYER\b/ },         // Bambu Studio
+    { id: 'cura', re: /^;LAYER:-?\d+/ },              // Cura, ideaMaker, KISSlicer-style
+    { id: 's3d', re: /^; layer \d+, Z = / },          // Simplify3D
+  ];
+  // where the end G-code starts (after the last layer marker)
+  const END_RE = /^(;TYPE:Custom|; ?MACHINE_END_GCODE_START|; EXECUTABLE_BLOCK_END|;TIME_ELAPSED|;End of Gcode|;\s*END_GCODE|; filament end gcode|;\s*Filament-specific end gcode)/i;
+
+  function layerMarker(lines) {
+    for (const mk of LAYER_MARKERS) if (lines.some(l => mk.re.test(l))) return mk;
+    return null;
+  }
+  function layerStarts(lines) {
+    const mk = layerMarker(lines);
+    const s = [];
+    if (mk) lines.forEach((l, i) => { if (mk.re.test(l)) s.push(i); });
+    return s;
+  }
+
+  function detectSlicer(text) {
+    const head = text.slice(0, 20000) + text.slice(-20000);
+    const list = [
+      [/SuperSlicer/i, 'SuperSlicer'], [/OrcaSlicer/i, 'OrcaSlicer'], [/BambuStudio|Bambu Studio/i, 'Bambu Studio'],
+      [/PrusaSlicer/i, 'PrusaSlicer'], [/Cura_SteamEngine|;FLAVOR:/i, 'Cura'], [/Simplify3D/i, 'Simplify3D'],
+      [/ideaMaker/i, 'ideaMaker'], [/KISSlicer/i, 'KISSlicer'], [/Slic3r/i, 'Slic3r'],
+    ];
+    for (const [re, n] of list) if (re.test(head)) return n;
+    return null;
+  }
+
+  // absolute extrusion (M82) -> relative (M83); everything else stays as is
+  function toRelativeE(text) {
+    if (!/^M82\b/m.test(text)) return { text, converted: false };
+    const lines = text.split(/\r?\n/);
+    const out = [];
+    let abs = true, g91 = false, last = 0, inserted = false;
+    const eRe = /E\s*([-+]?(?:\d*\.\d+|\d+\.?))/i;
+    for (const raw of lines) {
+      const sc = raw.indexOf(';');
+      const code = (sc >= 0 ? raw.slice(0, sc) : raw).trim();
+      const cmt = sc >= 0 ? raw.slice(sc) : '';
+      if (/^M82\b/i.test(code)) { abs = true; inserted = true; out.push('M83 ; converted from M82: relative extrusion'); continue; }
+      if (/^M83\b/i.test(code)) { abs = false; out.push(raw); continue; }
+      if (/^G91\b/i.test(code)) { g91 = true; out.push(raw); continue; }
+      if (/^G90\b/i.test(code)) { g91 = false; out.push(raw); if (abs && inserted) out.push('M83'); continue; }
+      if (/^G92\b/i.test(code)) { const m = eRe.exec(code.slice(3)); if (m && abs && !g91) last = parseFloat(m[1]); out.push(raw); continue; }
+      if (abs && !g91 && /^G[0-3]\b/i.test(code)) {
+        const m = eRe.exec(code.slice(2));
+        if (m) {
+          const e = parseFloat(m[1]);
+          const r = e - last;
+          last = e;
+          if (!inserted) { out.push('M83 ; converted to relative extrusion'); inserted = true; }
+          const nc = code.slice(0, 2) + code.slice(2).replace(eRe, 'E' + fmt(r, 5));
+          out.push(nc + (cmt ? ' ' + cmt : ''));
+          continue;
+        }
+      }
+      out.push(raw);
+    }
+    return { text: out.join('\n'), converted: true };
+  }
+
+  // ---- tokenizer: classifies every line and tracks the machine state ----
+  function tokenize(lines) {
+    const toks = new Array(lines.length);
+    let x = 0, y = 0, z = 0, f = 0, accel = null, m82 = false, rel = false;
+    const wordRe = /([A-Za-z])\s*([-+]?(?:\d*\.\d+|\d+\.?))/g;
+    for (let i = 0; i < lines.length; i++) {
+      const raw = lines[i];
+      const sc = raw.indexOf(';');
+      const code = (sc >= 0 ? raw.slice(0, sc) : raw).trim();
+      const tk = { raw, x0: x, y0: y, fPrev: f, accelPrev: accel };
+      if (!code) {
+        tk.t = TYPE_RE.test(raw) ? 'type' : 'comment';
+      } else {
+        const m = /^([GM])(\d+)(\.\d+)?/i.exec(code);
+        const cmd = m ? m[1].toUpperCase() + m[2] : '';
+        tk.cmd = cmd;
+        if (rel && (cmd === 'G0' || cmd === 'G1' || cmd === 'G2' || cmd === 'G3')) {
+          // relative positioning (G91): passed through untouched, position follows the deltas
+          tk.t = 'bad';
+          const rest = code.slice(m[0].length);
+          let mm;
+          wordRe.lastIndex = 0;
+          while ((mm = wordRe.exec(rest))) {
+            const k = mm[1].toUpperCase(), v = parseFloat(mm[2]);
+            if (k === 'X') x += v; else if (k === 'Y') y += v; else if (k === 'Z') z += v; else if (k === 'F') f = v;
+          }
+        } else if (cmd === 'G0' || cmd === 'G1' || cmd === 'G2' || cmd === 'G3') {
+          const w = {};
+          const rest = code.slice(m[0].length);
+          let mm;
+          wordRe.lastIndex = 0;
+          while ((mm = wordRe.exec(rest))) w[mm[1].toUpperCase()] = parseFloat(mm[2]);
+          const hasXY = 'X' in w || 'Y' in w, hasE = 'E' in w, hasZ = 'Z' in w;
+          const e = hasE ? w.E : 0;
+          const nx = 'X' in w ? w.X : x, ny = 'Y' in w ? w.Y : y;
+          if ('F' in w) { f = w.F; tk.Fp = w.F; }
+          tk.e = e;
+          if (cmd === 'G2' || cmd === 'G3') {
+            if ('R' in w || hasZ) tk.t = 'bad';
+            else if (!(e > 0)) tk.t = 'wipe'; // arc wipe / non-extruding arc
+            else { tk.t = 'ext'; tk.i = w.I || 0; tk.j = w.J || 0; }
+          } else if (hasXY && e > 0) tk.t = hasZ ? 'bad' : 'ext';
+          else if (hasXY && e < 0) tk.t = 'wipe';
+          else if (hasXY) tk.t = 'travel';
+          else if (hasE && e !== 0) tk.t = hasZ ? 'bad' : (e < 0 ? 'retract' : 'unretract');
+          else if (hasZ) tk.t = 'z';
+          else tk.t = 'f';
+          x = nx; y = ny;
+          if (hasZ) z = w.Z;
+        } else if (cmd === 'G92') {
+          tk.t = /[XYZ]/i.test(code.slice(3)) ? 'bad' : 'g92';
+        } else if (cmd === 'G91') { tk.t = 'bad'; rel = true; }
+        else if (cmd === 'G90') { tk.t = 'other'; rel = false; }
+        else if (cmd === 'G10' && /^G10$/i.test(code)) tk.t = 'fwr';   // firmware retract
+        else if (cmd === 'G11' && /^G11$/i.test(code)) tk.t = 'fwu';   // firmware unretract
+        else if (cmd === 'M82') { tk.t = 'bad'; m82 = true; }
+        else if (cmd === 'M73') tk.t = 'm73';
+        else if (cmd === 'M204') { tk.t = 'm204'; accel = code; }
+        else tk.t = 'other';
+      }
+      tk.x = x; tk.y = y; tk.z = z; tk.f = f; tk.accel = accel;
+      toks[i] = tk;
+    }
+    return { toks, m82 };
+  }
+
+  function setXY(raw, x, y) {
+    const sc = raw.indexOf(';');
+    let code = sc >= 0 ? raw.slice(0, sc) : raw;
+    const cmt = sc >= 0 ? ' ' + raw.slice(sc) : '';
+    const m = /^\s*G[0-3]/i.exec(code);
+    code = code.slice(m[0].length).replace(/\s*[XY]\s*[-+]?(?:\d*\.\d+|\d+\.?)/gi, '');
+    return (`${m[0].trim()} X${fmt(x, 3)} Y${fmt(y, 3)}` + code.replace(/\s+$/, '')).replace(/\s+/g, ' ') + cmt;
+  }
+  function stripXY(raw) {
+    const sc = raw.indexOf(';');
+    let code = sc >= 0 ? raw.slice(0, sc) : raw;
+    code = code.replace(/\s*[XY]\s*[-+]?(?:\d*\.\d+|\d+\.?)/gi, '').trim();
+    return /^G[0-3]$/i.test(code) ? null : code;
+  }
+
+  // ---- geometry helpers ----
+  const flip = { G1: 'G1', G2: 'G3', G3: 'G2' };
+  function mkSeg(tk) {
+    const cmd = tk.cmd === 'G0' ? 'G1' : tk.cmd;
+    const a = [tk.x0, tk.y0], b = [tk.x, tk.y];
+    return { cmd, a, b, e: tk.e, f: tk.f, c: cmd === 'G1' ? null : [tk.x0 + tk.i, tk.y0 + tk.j], len: dist(a, b), pre: null };
+  }
+  const segPt = (s, t) => t <= 0 ? s.a : t >= 1 ? s.b : [s.a[0] + (s.b[0] - s.a[0]) * t, s.a[1] + (s.b[1] - s.a[1]) * t];
+  function nearestOnChain(ch, p) {
+    let best = null;
+    const n = ch.segs.length;
+    for (let s = 0; s < n; s++) {
+      const sg = ch.segs[s];
+      if (sg.cmd === 'G1' && sg.len > 1e-9) {
+        const dx = sg.b[0] - sg.a[0], dy = sg.b[1] - sg.a[1];
+        let t = ((p[0] - sg.a[0]) * dx + (p[1] - sg.a[1]) * dy) / (dx * dx + dy * dy);
+        t = Math.max(0, Math.min(1, t));
+        const q = segPt(sg, t), d = dist(p, q);
+        if (!best || d < best.d) best = { d, loc: { s, t }, pt: q };
+      } else {
+        for (const t of [0, 1]) {
+          const q = t ? sg.b : sg.a, d = dist(p, q);
+          if (!best || d < best.d) best = { d, loc: { s, t }, pt: q };
+        }
+      }
+    }
+    if (best.loc.t >= 1 - 1e-9 && best.loc.s + 1 < n) best.loc = { s: best.loc.s + 1, t: 0 };
+    if (best.loc.t <= 1e-9) best.loc.t = 0;
+    return best;
+  }
+
+  function finishChain(ch, o) {
+    const segs = ch.segs, n = segs.length;
+    ch.start = segs[0].a; ch.end = segs[n - 1].b;
+    ch.len = segs.reduce((s, g) => s + g.len, 0);
+    ch.gap = dist(ch.start, ch.end);
+    ch.closed = n >= 3 && ch.gap <= o.closeTol && ch.len > 4 * Math.max(ch.gap, 0.05);
+    if (ch.closed && ch.gap > 1e-4) {
+      const last = segs[n - 1];
+      const ratio = last.cmd === 'G1' && last.len > 1e-6 ? last.e / last.len
+        : segs.reduce((s, g) => s + g.e, 0) / Math.max(ch.len, 1e-6);
+      ch.closeSeg = { cmd: 'G1', a: ch.end, b: ch.start, e: ch.gap * ratio, f: last.f, c: null, len: ch.gap, pre: null };
+    }
+    if (!ch.closed) {
+      ch.rsegs = segs.slice().reverse().map(s => ({ cmd: flip[s.cmd], a: s.b, b: s.a, e: s.e, f: s.f, c: s.c, len: s.len, pre: s.pre }));
+    }
+  }
+
+  // ---- split a layer into extrusion chains / travel blocks ----
+  const CHAIN_INNER = new Set(['f', 'comment', 'm73', 'g92']);
+  const BLOCK_OK = new Set(['travel', 'wipe', 'retract', 'unretract', 'fwr', 'fwu', 'z', 'f', 'g92', 'm204', 'comment', 'm73']);
+  function analyzeLayer(toks, a, b, o) {
+    const chains = [];
+    let cur = null, pend = [];
+    for (let i = a; i < b; i++) {
+      const tk = toks[i];
+      if (tk.t === 'bad') return null;
+      if (tk.t === 'ext') {
+        if (!cur) { cur = { segs: [], si: i, ei: i, accel: tk.accelPrev }; chains.push(cur); pend = []; }
+        const sg = mkSeg(tk);
+        const pre = pend.filter(p => p.t !== 'f' && p.raw.trim() !== '').map(p => p.raw);
+        if (pre.length) sg.pre = pre;
+        pend = [];
+        cur.segs.push(sg); cur.ei = i;
+      } else if (cur && CHAIN_INNER.has(tk.t)) pend.push(tk);
+      else { cur = null; pend = []; }
+    }
+    if (!chains.length) return null;
+    const layerZ = toks[chains[0].si].z;
+    for (const ch of chains) {
+      for (let i = ch.si; i <= ch.ei; i++) if (toks[i].t === 'ext' && Math.abs(toks[i].z - layerZ) > 1e-6) return null;
+    }
+    // blocks between chains -> lead lines + run boundaries
+    const runs = [[chains[0]]];
+    chains[0].lead = [];
+    for (let k = 1; k < chains.length; k++) {
+      const ch = chains[k];
+      let boundary = false;
+      const lead = [];
+      for (let i = chains[k - 1].ei + 1; i < ch.si; i++) {
+        const tk = toks[i];
+        if (!BLOCK_OK.has(tk.t)) boundary = true;
+        if (tk.t === 'comment' || tk.t === 'type' || tk.t === 'other' || tk.t === 'm73') {
+          if (tk.raw.trim() !== '' && !/^;\s*WIPE_/.test(tk.raw)) lead.push(tk.raw);
+        }
+      }
+      ch.lead = lead;
+      if (boundary) runs.push([ch]); else runs[runs.length - 1].push(ch);
+    }
+    for (const ch of chains) finishChain(ch, o);
+    const res = { chains, runs, layerZ, headerEnd: chains[0].si, footerStart: chains[chains.length - 1].ei + 1, removed: [], tailLead: [] };
+    // drop short stand-alone extrusions; their state lines move to the next kept chain
+    if (o.removeShort > 0) {
+      const keep = chains.filter(ch => ch.len >= o.removeShort);
+      if (keep.length && keep.length < chains.length) {
+        let carry = [];
+        for (const ch of chains) {
+          if (ch.len < o.removeShort) { carry = carry.concat(ch.lead); res.removed.push(ch); }
+          else if (carry.length) { ch.lead = carry.concat(ch.lead); carry = []; }
+        }
+        res.tailLead = carry;
+        res.chains = keep;
+        res.runs = runs.map(r => r.filter(ch => ch.len >= o.removeShort)).filter(r => r.length);
+        // lines that preceded the first kept chain stay at the layer start
+        res.headLead = keep[0].lead;
+        keep[0].lead = [];
+      }
+    }
+    return res;
+  }
+
+  // ---- planning ----
+  function bestEntry(ch, p, o) {
+    if (ch.closed) {
+      if (o.rotate) {
+        const nr = nearestOnChain(ch, p);
+        const d0 = dist(p, ch.start);
+        if (d0 - nr.d > o.rotateMin && !(nr.loc.s === 0 && nr.loc.t === 0))
+          return { mode: 'rot', loc: nr.loc, entry: nr.pt, exit: nr.pt };
+      }
+    } else if (o.reverse && dist(p, ch.end) + 1e-6 < dist(p, ch.start)) {
+      return { mode: 'rev', entry: ch.end, exit: ch.start };
+    }
+    return { mode: 'orig', entry: ch.start, exit: ch.end };
+  }
+
+  function assignDetours(chains, o, prefer) {
+    const hostMap = new Map(), isDetour = new Set(), isHost = new Set();
+    const sorted = chains.slice().sort((a, b) => a.len - b.len);
+    for (const X of sorted) {
+      if (isHost.has(X) || X === prefer) continue;
+      let best = null;
+      for (const H of chains) {
+        if (H === X || !H.closed || isDetour.has(H) || (H.len <= X.len && H !== prefer)) continue;
+        if (X.closed) {
+          X.segs.forEach((sg, k) => {
+            const nq = nearestOnChain(H, sg.a), c = 2 * nq.d + X.gap;
+            if (!best || c < best.c) best = { c, H, loc: nq.loc, item: { chain: X, mode: k === 0 ? 'orig' : 'rot', loc: { s: k, t: 0 }, entry: sg.a } };
+          });
+        } else {
+          for (const rev of (o.reverse ? [false, true] : [false])) {
+            const en = rev ? X.end : X.start, ex = rev ? X.start : X.end;
+            const nq = nearestOnChain(H, en), c = nq.d + dist(ex, nq.pt);
+            if (!best || c < best.c) best = { c, H, loc: nq.loc, item: { chain: X, mode: rev ? 'rev' : 'orig', entry: en } };
+          }
+        }
+      }
+      if (best && best.c <= o.detourMax) {
+        isDetour.add(X); isHost.add(best.H);
+        if (!hostMap.has(best.H)) hostMap.set(best.H, []);
+        hostMap.get(best.H).push({ loc: best.loc, item: best.item });
+      }
+    }
+    return { hostMap, isDetour };
+  }
+
+  function buildPlan(L, startPos, o, greedy, detours) {
+    let pos = startPos;
+    const items = [];
+    for (const run of L.runs) {
+      let prefer = null;
+      if (detours === 2) {
+        let bd = Infinity;
+        for (const c of run) { const d = dist(pos, bestEntry(c, pos, o).entry); if (c.closed && d < bd) { bd = d; prefer = c; } }
+      }
+      const { hostMap, isDetour } = detours ? assignDetours(run, o, prefer) : { hostMap: new Map(), isDetour: new Set() };
+      const rem = run.filter(c => !isDetour.has(c));
+      let firstOfRun = true;
+      while (rem.length) {
+        let pick = 0, be = bestEntry(rem[0], pos, o);
+        if (greedy) {
+          for (let k = 1; k < rem.length; k++) {
+            const b2 = bestEntry(rem[k], pos, o);
+            if (dist(pos, b2.entry) < dist(pos, be.entry) - 1e-6) { pick = k; be = b2; }
+          }
+        }
+        const ch = rem.splice(pick, 1)[0];
+        items.push(Object.assign({ chain: ch, detours: hostMap.get(ch) || [] }, be));
+        pos = be.exit;
+        firstOfRun = false;
+      }
+    }
+    return items;
+  }
+
+  // ---- emission (also used as dry run for cost) ----
+  function out(S, line) { if (!S.dry) S.out.push(line); }
+
+  function travel(S, to) {
+    const d = dist(S.pos, to);
+    S.cost += d + (d >= 0.05 ? o_pen(S) : 0);
+    S.dist += d;
+    if (d >= 0.05) S.nTrav++;
+    if (d < 1e-3) { S.pos = to; return; }
+    const P = S.params;
+    const retract = d >= S.o.minRetract && (P.retract > 0 || P.fw);
+    if (retract) {
+      S.nRetr++;
+      out(S, P.fw ? 'G10' : `G1 E-${fmt(P.retract, 5)} F${fmt(P.rF, 0)}`);
+      if (P.hop > 0) out(S, `G1 Z${fmt(S.z + P.hop, 3)} F${fmt(P.zF, 0)}`);
+    }
+    out(S, `G1 X${fmt(to[0], 3)} Y${fmt(to[1], 3)} F${fmt(P.travelF, 0)}`);
+    S.f = P.travelF;
+    if (retract) {
+      if (P.hop > 0) { out(S, `G1 Z${fmt(S.z, 3)} F${fmt(P.zF, 0)}`); S.f = P.zF; }
+      if (P.fw) out(S, 'G11');
+      else { out(S, `G1 E${fmt(P.unretract, 5)} F${fmt(P.uF, 0)}`); S.f = P.uF; }
+    }
+    S.pos = to;
+  }
+  const o_pen = (S) => S.o.travelPenalty;
+
+  function buildOps(item) {
+    const ch = item.chain;
+    const segs = item.mode === 'rev' ? ch.rsegs : ch.segs;
+    const n = segs.length;
+    let pieces;
+    if (item.mode === 'rot') {
+      const { s, t } = item.loc;
+      pieces = [];
+      if (t < 1) pieces.push({ seg: segs[s], si: s, t0: t, t1: 1 });
+      for (let k = s + 1; k < n; k++) pieces.push({ seg: segs[k], si: k, t0: 0, t1: 1 });
+      if (ch.closeSeg) pieces.push({ seg: ch.closeSeg, si: n, t0: 0, t1: 1 });
+      for (let k = 0; k < s; k++) pieces.push({ seg: segs[k], si: k, t0: 0, t1: 1 });
+      if (t > 0) pieces.push({ seg: segs[s], si: s, t0: 0, t1: t });
+    } else pieces = segs.map((seg, k) => ({ seg, si: k, t0: 0, t1: 1 }));
+    const dets = (item.detours || []).map(d => ({ loc: d.loc, item: d.item, used: false }));
+    const ops = [];
+    for (const pc of pieces) {
+      const cuts = dets.filter(d => !d.used && d.loc.s === pc.si && d.loc.t >= pc.t0 - 1e-9 && d.loc.t <= pc.t1 + 1e-9)
+        .sort((a, b) => a.loc.t - b.loc.t);
+      let cur = pc.t0;
+      for (const d of cuts) {
+        d.used = true;
+        if (d.loc.t > cur + 1e-9) { ops.push({ seg: pc.seg, t0: cur, t1: d.loc.t }); cur = d.loc.t; }
+        ops.push({ detour: d.item });
+      }
+      if (pc.t1 > cur + 1e-9) ops.push({ seg: pc.seg, t0: cur, t1: pc.t1 });
+    }
+    for (const d of dets) if (!d.used) ops.push({ detour: d.item });
+    if (item.mode === 'rot' && ch.gap > 1e-4) {
+      // keep the original seam gap (loop clipping) at the new seam
+      let rem = ch.gap;
+      while (rem > 1e-6 && ops.length) {
+        const op = ops[ops.length - 1];
+        if (op.detour || op.seg.cmd !== 'G1' || op.seg.len < 1e-9) break;
+        const Lp = op.seg.len * (op.t1 - op.t0);
+        if (Lp <= rem + 1e-9) { ops.pop(); rem -= Lp; }
+        else { op.t1 -= rem / op.seg.len; rem = 0; }
+      }
+    }
+    return ops;
+  }
+
+  function emitItem(S, item) {
+    const ch = item.chain;
+    if (ch.accel && ch.accel !== S.accel) { out(S, ch.accel); S.accel = ch.accel; }
+    for (const op of buildOps(item)) {
+      if (op.detour) {
+        const q = S.pos;
+        travel(S, op.detour.entry);
+        if (op.detour.chain.lead) for (const l of op.detour.chain.lead) out(S, l);
+        emitItem(S, op.detour);
+        travel(S, q);
+        if (ch.accel && ch.accel !== S.accel) { out(S, ch.accel); S.accel = ch.accel; }
+        continue;
+      }
+      const sg = op.seg;
+      const p0 = segPt(sg, op.t0), p1 = segPt(sg, op.t1);
+      if (dist(S.pos, p0) > 2e-3) travel(S, p0);
+      if (op.t0 === 0 && sg.pre) for (const l of sg.pre) out(S, l);
+      const e = sg.e * (op.t1 - op.t0);
+      let line;
+      if (sg.cmd === 'G1') line = `G1 X${fmt(p1[0], 3)} Y${fmt(p1[1], 3)} E${fmt(e, 5)}`;
+      else line = `${sg.cmd} X${fmt(p1[0], 3)} Y${fmt(p1[1], 3)} I${fmt(sg.c[0] - p0[0], 3)} J${fmt(sg.c[1] - p0[1], 3)} E${fmt(e, 5)}`;
+      if (sg.f !== S.f) { line += ` F${fmt(sg.f, 3)}`; S.f = sg.f; }
+      out(S, line);
+      S.e += e;
+      S.pos = p1;
+    }
+  }
+
+  function emitPlan(S, items) {
+    items.forEach((item, k) => {
+      if (k > 0) {
+        travel(S, item.entry);
+        for (const l of item.chain.lead) out(S, l);
+      }
+      emitItem(S, item);
+    });
+  }
+
+  // ---- verbatim emission that repairs position / modal state after a modified layer ----
+  function vEmit(S, tk) {
+    if (tk.t === 'm204') { S.out.push(tk.raw); S.accel = tk.accel; return; }
+    if (!MOVE_TYPES.has(tk.t)) { S.out.push(tk.raw); return; }
+    let raw = tk.raw;
+    if (!S.sync) {
+      if (tk.t === 'travel') { raw = setXY(raw, tk.x, tk.y); S.sync = true; }
+      else if (tk.t === 'wipe') raw = `G1 E${fmt(tk.e, 5)}` + (tk.Fp !== undefined ? ` F${fmt(tk.Fp, 3)}` : '');
+      else if (tk.t === 'ext') { travel(S, [tk.x0, tk.y0]); S.sync = true; }
+    }
+    if (tk.t === 'ext' && tk.accelPrev && S.accel !== tk.accelPrev) { S.out.push(tk.accelPrev); S.accel = tk.accelPrev; }
+    if (tk.Fp === undefined && tk.t !== 'f' && S.f !== tk.fPrev) S.out.push(`G1 F${fmt(tk.fPrev, 3)}`);
+    S.out.push(raw);
+    S.f = tk.f;
+    S.z = tk.z;
+    if (S.sync) S.pos = [tk.x, tk.y];
+  }
+
+  function learnParams(toks, from, cfg) {
+    const P = { retract: 0, rF: 2100, unretract: 0, uF: 1500, travelF: 12000, hop: 0, zF: 720, fw: false };
+    let fallback = null;
+    let lastExt = -1;
+    for (let i = from; i < toks.length; i++) {
+      const tk = toks[i];
+      if (tk.t === 'z' && tk.Fp !== undefined) P.zF = tk.Fp;
+      if (tk.t !== 'ext') continue;
+      if (lastExt >= 0 && i > lastExt + 1) {
+        let r = 0, rF = null, u = 0, uF = null, tF = null, zmax = -1e9, nt = 0, fw = false;
+        for (let k = lastExt + 1; k < i; k++) {
+          const b = toks[k];
+          if (b.t === 'retract' || b.t === 'wipe') { r -= b.e; if (b.t === 'retract' && rF === null) rF = b.f; }
+          if (b.t === 'unretract') { u += b.e; if (uF === null) uF = b.f; }
+          if (b.t === 'fwr') fw = true;
+          if (b.t === 'travel') { nt++; if (tF === null) tF = b.f; }
+          if (b.t === 'travel' || b.t === 'z') zmax = Math.max(zmax, b.z);
+        }
+        if (nt && (r > 0 || fw)) {
+          const cand = { retract: r, rF: rF || P.rF, unretract: u, uF: uF || P.uF, travelF: tF || P.travelF, hop: 0, zF: P.zF, fw };
+          if (Math.abs(toks[lastExt].z - tk.z) < 1e-6) {
+            cand.hop = Math.max(0, zmax - tk.z);
+            Object.assign(P, cand);
+            P.source = 'travel';
+            return P;
+          }
+          if (!fallback) fallback = cand;
+        }
+      }
+      lastExt = i;
+    }
+    if (fallback) { Object.assign(P, fallback); P.source = 'layerchange'; }
+    else P.source = 'default';
+    if (cfg && cfg.travel_speed) P.travelF = parseFloat(cfg.travel_speed) * 60;
+    return P;
+  }
+
+  // ---- travel statistics of a G-code text (independent check) ----
+  function stats(text) {
+    const lines = text.split(/\r?\n/);
+    const { toks } = tokenize(lines);
+    const isStart = new Set(layerStarts(lines));
+    const layers = [];
+    let cur = { dist: 0, n: 0, n1: 0, e: 0 }, started = false, total = { dist: 0, n: 0, n1: 0, n5: 0 };
+    for (let i = 0; i < toks.length; i++) {
+      const tk = toks[i];
+      if (isStart.has(i)) { if (started) layers.push(cur); cur = { dist: 0, n: 0, n1: 0, e: 0 }; started = true; }
+      if (!started) continue;
+      if (tk.t === 'travel' || tk.t === 'wipe') {
+        const d = dist([tk.x0, tk.y0], [tk.x, tk.y]);
+        cur.dist += d; total.dist += d;
+        if (d >= 0.05) { cur.n++; total.n++; }
+        if (d >= 1) { cur.n1++; total.n1++; }
+        if (d >= 5) total.n5++;
+      }
+      if (tk.t === 'ext') cur.e += tk.e;
+    }
+    if (started) layers.push(cur);
+    return { layers, total };
+  }
+
+  function readConfig(text) {
+    const cfg = {};
+    const re = /^;?[ \t]*([a-z_0-9]+)[ \t]*=[ \t]*(.*)$/gm;
+    let m;
+    const tail = text.length > 400000 ? text.slice(-400000) : text;
+    while ((m = re.exec(tail))) cfg[m[1]] = m[2];
+    return cfg;
+  }
+
+  // ---- main ----
+  function optimize(text, o, cfg) {
+    const lines = text.split(/\r?\n/);
+    if (lines.length && lines[lines.length - 1] === '') lines.pop();
+    const { toks, m82 } = tokenize(lines);
+    if (m82) throw new Error('ERR_M82');
+    const starts = layerStarts(lines);
+    if (!starts.length) throw new Error('ERR_NO_LAYERS');
+    let endIdx = lines.length;
+    for (let i = starts[starts.length - 1]; i < lines.length; i++) if (END_RE.test(lines[i])) { endIdx = i; break; }
+    const params = learnParams(toks, starts[0], cfg);
+
+    const S = { out: [], pos: [0, 0], f: 0, z: 0, accel: null, sync: true, params, o, dry: false, cost: 0, dist: 0, nTrav: 0, nRetr: 0, e: 0 };
+    for (let i = 0; i < starts[0]; i++) vEmit(S, toks[i]);
+    const report = [];
+    for (let li = 0; li < starts.length; li++) {
+      const a = starts[li], b = li + 1 < starts.length ? starts[li + 1] : endIdx;
+      const L = analyzeLayer(toks, a, b, o);
+      let done = false;
+      const startPos = S.pos;
+      if (L) {
+        // original travel cost from the actual start position
+        let oc = 0, on = 0, first = true;
+        for (let i = a; i < L.footerStart; i++) {
+          const tk = toks[i];
+          if (tk.t === 'travel' || tk.t === 'wipe') {
+            const d = dist(first ? startPos : [tk.x0, tk.y0], [tk.x, tk.y]);
+            first = false;
+            oc += d; if (d >= 0.05) { on++; oc += o.travelPenalty; }
+          } else if (tk.t === 'ext' && first) {
+            const d = dist(startPos, [tk.x0, tk.y0]); first = false; oc += d; if (d >= 0.05) { on++; oc += o.travelPenalty; }
+          }
+        }
+        let best = null;
+        const combos = [[false, false]];
+        if (o.reorder) combos.push([true, false]);
+        if (o.detours) for (const dm of [1, 2]) { combos.push([false, dm]); if (o.reorder) combos.push([true, dm]); }
+        for (const [g, d] of combos) {
+          const items = buildPlan(L, startPos, o, g, d);
+          const D = { dry: true, pos: startPos, f: S.f, z: L.layerZ, accel: S.accel, params, o, cost: 0, dist: 0, nTrav: 0, nRetr: 0, e: 0 };
+          const d0 = dist(startPos, items[0].entry);
+          D.cost += d0 + (d0 >= 0.05 ? o.travelPenalty : 0); D.dist += d0; if (d0 >= 0.05) D.nTrav++;
+          D.pos = items[0].entry;
+          emitPlan(D, items);
+          if (!best || D.cost < best.D.cost - 1e-9) best = { D, items };
+        }
+        const nRem = L.removed.length;
+        if (nRem || best.D.cost < oc - o.minGain) {
+          done = true;
+          emitLayer(S, toks, a, b, L, best.items, o);
+          const remLen = L.removed.reduce((s, c) => s + c.len, 0);
+          const remE = L.removed.reduce((s, c) => s + c.segs.reduce((t, g) => t + g.e, 0), 0);
+          report.push({ layer: li + 1, before: oc, after: best.D.cost, nBefore: on, nAfter: best.D.nTrav, removed: nRem, remLen, remE });
+        }
+      }
+      if (!done) {
+        const skip = L ? layerRetractSkip(toks, a, L.headerEnd, startPos, null, o) : null;
+        for (let i = a; i < b; i++) if (!skip || !skip.has(i)) vEmit(S, toks[i]);
+      }
+    }
+    for (let i = endIdx; i < lines.length; i++) vEmit(S, toks[i]);
+    return { text: S.out.join('\n') + '\n', report, params };
+  }
+
+  // optional: drop retract/unretract at layer change when the travel is short
+  function layerRetractSkip(toks, a, hEnd, startPos, target, o) {
+    if (!o.dropLayerRetract) return null;
+    let tgt = target;
+    const r = [], u = [];
+    for (let i = a; i < hEnd; i++) {
+      const tk = toks[i];
+      if (tk.t === 'wipe') return null;
+      if (tk.t === 'travel' && !target) tgt = [tk.x, tk.y];
+      if (tk.t === 'retract' || tk.t === 'fwr') r.push(i);
+      if (tk.t === 'unretract' || tk.t === 'fwu') u.push(i);
+    }
+    if (!tgt) tgt = [toks[hEnd].x0, toks[hEnd].y0];
+    if (!r.length || dist(startPos, tgt) >= o.minRetract) return null;
+    const nfr = r.filter(i => toks[i].t === 'fwr').length, nfu = u.filter(i => toks[i].t === 'fwu').length;
+    if (nfr !== nfu) return null;
+    const sr = r.reduce((s, i) => s + (toks[i].e || 0), 0), su = u.reduce((s, i) => s + (toks[i].e || 0), 0);
+    if (Math.abs(sr + su) > 1e-4) return null;
+    return new Set([...r, ...u]);
+  }
+
+  function emitLayer(S, toks, a, b, L, items, o) {
+    const entry = items[0].entry;
+    const hEnd = L.headerEnd;
+    let lastT = -1, firstU = -1;
+    for (let i = a; i < hEnd; i++) {
+      if (toks[i].t === 'travel') lastT = i;
+      if ((toks[i].t === 'unretract' || toks[i].t === 'fwu') && firstU < 0) firstU = i;
+    }
+    const skip = layerRetractSkip(toks, a, hEnd, S.pos, entry, o) || new Set();
+    const insertAt = lastT >= 0 ? -1 : (firstU >= 0 ? firstU : hEnd);
+    for (let i = a; i < hEnd; i++) {
+      const tk = toks[i];
+      if (i === insertAt) { S.out.push(`G1 X${fmt(entry[0], 3)} Y${fmt(entry[1], 3)} F${fmt(S.params.travelF, 0)}`); S.f = S.params.travelF; S.pos = entry; S.sync = true; }
+      if (skip.has(i)) continue;
+      if (tk.t === 'travel') {
+        if (S.f !== tk.fPrev && tk.Fp === undefined) S.out.push(`G1 F${fmt(tk.fPrev, 3)}`);
+        if (i === lastT) { S.out.push(setXY(tk.raw, entry[0], entry[1])); S.pos = entry; S.sync = true; }
+        else { const s = stripXY(tk.raw); if (s) S.out.push(s); }
+        S.f = tk.f; S.z = tk.z;
+      } else vEmit(S, tk);
+    }
+    if (insertAt === hEnd) { S.out.push(`G1 X${fmt(entry[0], 3)} Y${fmt(entry[1], 3)} F${fmt(S.params.travelF, 0)}`); S.f = S.params.travelF; S.pos = entry; }
+    S.pos = entry; S.z = L.layerZ;
+    if (L.headLead) for (const l of L.headLead) S.out.push(l);
+    emitPlan(S, items);
+    for (const l of L.tailLead) S.out.push(l);
+    const lastTok = toks[L.footerStart - 1];
+    S.sync = dist(S.pos, [lastTok.x, lastTok.y]) < 1e-3;
+    for (let i = L.footerStart; i < b; i++) vEmit(S, toks[i]);
+  }
+
+  return { optimize, stats, readConfig, tokenize, fmt, layerStarts, layerMarker, toRelativeE, detectSlicer };
+})();
+
+</script>
+<script>
+(() => {
+  // ---------- translations ----------
+  const I18N = {
+    en: {
+      sub: 'Reduces travel moves in G-code (.gcode / Prusa .bgcode), e.g. against stringing with foaming / LW-PLA. Runs entirely in your browser – your files are never uploaded.',
+      h_file: 'File', drop: 'Drop G-code here or click', drop_sub: '.gcode or .bgcode (Prusa binary G-code)',
+      h_opts: 'Options',
+      o_rotate: 'Move loop start', o_rotate_d: 'Closed walls start at the point closest to the current nozzle position (e.g. above the end of the previous layer).',
+      o_detours: 'Print islands as detours', o_detours_d: 'Small paths next to a wall are printed on the way instead of being travelled to separately. Max. detour (there and back):',
+      o_remove: 'Remove stand-alone extrusions shorter than', o_remove_d: '0 = remove nothing. Only affects single, isolated paths (mini islands) whose total length is below the value. They add no strength but cause their own travel moves.',
+      off: 'off',
+      o_reorder: 'Reorder paths', o_reorder_d: 'Within one feature type the nearest path is always printed next.',
+      o_reverse: 'Reverse open paths', o_reverse_d: 'Open paths (infill, gap fill) may be printed starting from their other end.',
+      o_minret: 'No retraction on new travels shorter than', o_minret_d: 'Taken from the slicer settings (retract_before_travel) if available.',
+      o_droplr: 'Skip retraction on layer change', o_droplr_d: 'Only if the travel to the new layer is shorter than the value on the left.',
+      advanced: 'Advanced',
+      o_close: 'A loop counts as closed if its gap is ≤', o_gain: 'Only change a layer if it saves at least',
+      o_rotmin: 'Only move a loop start if it gains at least', o_pen: 'Penalty per travel (prefers fewer travels)',
+      run: 'Optimize', dl: 'Download', dlg: 'Download as .gcode',
+      h_res: 'Result', h_layers: 'Changed layers (biggest saving first, travel in mm)',
+      th_tb: 'Travel before', th_after: 'after', th_nb: 'Travels before', th_rem: 'removed',
+      h_prev: 'Preview', optimized: 'Optimized', lg_start: 'Layer start',
+      st_read: 'Reading file …', st_opt: 'Optimizing …', st_check: 'Checking result …', st_done: 'Done in {s} s',
+      st_zip: 'Compressing .bgcode …', st_saved: 'Saved.', st_readerr: 'Error while reading: ', st_err: 'Error: ',
+      fi_bin: 'Binary G-code', fi_layers: 'layers', fi_slicer: 'Slicer', fi_seam: 'Seam', fi_perim: 'Perimeters', fi_unknown: 'unknown',
+      fi_conv: 'Absolute extrusion (M82) was converted to relative (M83) – the result also uses relative extrusion.',
+      fi_nolayers: 'No layer markers found – this slicer is not supported.',
+      s_dist: 'Travel distance', s_n1: 'Travels ≥ 1 mm', s_n5: 'Travels ≥ 5 mm', s_layers: 'Changed layers', s_rem: 'Removed mini extrusions',
+      n_new: 'New travels: retraction {r} mm @ {rs} mm/s, travel {ts} mm/s', n_fw: 'New travels: firmware retraction (G10/G11), travel {ts} mm/s',
+      n_hop: ', Z hop {h} mm', n_src: ' (taken from {src}).', src_travel: 'an existing travel', src_layer: 'the layer change', src_default: 'default values',
+      n_de: ' Max. deviation of extruded amount per layer: {d} mm filament.', n_layers: ' ⚠ Layer count differs – do not use this result!',
+      n_rem: ' Removed: {n} mini extrusions, {l} mm of path / {e} mm of filament in total.',
+      layer: 'Layer', changed: 'changed', travels: 'travels',
+      ERR_NO_LAYERS: 'No layer markers found. Supported: PrusaSlicer, SuperSlicer, OrcaSlicer, Bambu Studio, Cura, ideaMaker, Simplify3D.',
+      ERR_M82: 'Absolute extrusion (M82) could not be converted.', ERR_NOT_BGCODE: 'Not a .bgcode file.', ERR_COMPRESSION: 'Unknown compression in .bgcode file.',
+      h_about: 'How it works',
+      about: `<p>Slicers often start a layer far away from where the previous layer ended, or travel to small separate islands and back. With materials that string a lot (foaming PLA, LW-PLA, PETG, TPU) every travel leaves a hair. This tool rewrites the G-code so that</p>
+<ul><li>closed loops start where the nozzle currently is,</li><li>small islands touching a wall are printed as a short detour from that wall,</li><li>paths of the same feature type are printed in nearest-neighbour order (open paths may be reversed),</li><li>optionally, tiny stand-alone extrusions are dropped.</li></ul>
+<p>Geometry, extrusion amounts, speeds and feature order stay the same; only start points and the order of paths change. Each layer is only rewritten if it gets shorter travels, and anything the tool does not understand is left untouched.</p>
+<p><b>Supported slicers:</b> PrusaSlicer, SuperSlicer, OrcaSlicer, Bambu Studio, Cura, ideaMaker, Simplify3D (plain .gcode), plus Prusa binary .bgcode. Relative and absolute extrusion, firmware retraction (G10/G11), Z hop and arcs (G2/G3) are handled. Tested on a Prusa MK4S with PrusaSlicer files; other slicers were tested with converted files – please check the result in your slicer's G-code preview before printing.</p>`,
+      foot: 'Free and unencumbered software released into the public domain (<a href="https://unlicense.org">Unlicense</a>). No warranty – use at your own risk. · <a href="https://github.com/sch000f/gcode-travel-optimizer">Source &amp; issues on GitHub</a>',
+    },
+    de: {
+      sub: 'Reduziert Travel-Moves in G-Code (.gcode / Prusa .bgcode), z.B. gegen Stringing bei Foaming-/LW-PLA. Läuft komplett im Browser – deine Dateien werden nirgends hochgeladen.',
+      h_file: 'Datei', drop: 'G-Code hierher ziehen oder klicken', drop_sub: '.gcode oder .bgcode (Prusa binary G-code)',
+      h_opts: 'Optionen',
+      o_rotate: 'Loop-Start verschieben', o_rotate_d: 'Geschlossene Wände beginnen an dem Punkt, der der aktuellen Düsenposition am nächsten liegt (z.B. über dem Ende des vorherigen Layers).',
+      o_detours: 'Inseln als Abstecher einfügen', o_detours_d: 'Kleine Pfade nahe einer Wand werden unterwegs mitgedruckt statt separat angefahren. Max. Abstecher-Weg (hin+zurück):',
+      o_remove: 'Alleinstehende Extrusionen entfernen, kürzer als', o_remove_d: '0 = nichts entfernen. Betrifft nur einzelne, für sich stehende Pfade (Mini-Inseln), deren gesamte Länge unter dem Wert liegt. Sie tragen nichts zur Festigkeit bei, verursachen aber eigene Travel-Moves.',
+      off: 'aus',
+      o_reorder: 'Pfade umsortieren', o_reorder_d: 'Innerhalb eines Feature-Typs wird immer der nächstgelegene Pfad als Nächstes gedruckt.',
+      o_reverse: 'Offene Pfade umkehren', o_reverse_d: 'Nicht geschlossene Pfade (Infill, Gap Fill) dürfen vom anderen Ende her gedruckt werden.',
+      o_minret: 'Kein Retract bei neuen Travels unter', o_minret_d: 'Wird aus den Slicer-Einstellungen übernommen (retract_before_travel), falls vorhanden.',
+      o_droplr: 'Retract beim Layerwechsel weglassen', o_droplr_d: 'Nur wenn der Travel zum neuen Layer kürzer als der Wert links ist.',
+      advanced: 'Erweitert',
+      o_close: 'Loop gilt als geschlossen bei Lücke ≤', o_gain: 'Layer nur ändern, wenn Ersparnis ≥',
+      o_rotmin: 'Loop-Start nur verschieben ab Gewinn von', o_pen: 'Strafkosten pro Travel (bevorzugt weniger Travels)',
+      run: 'Optimieren', dl: 'Herunterladen', dlg: 'Als .gcode herunterladen',
+      h_res: 'Ergebnis', h_layers: 'Geänderte Layer (grösste Ersparnis zuerst, Travel in mm)',
+      th_tb: 'Travel vorher', th_after: 'nachher', th_nb: 'Travels vorher', th_rem: 'entfernt',
+      h_prev: 'Vorschau', optimized: 'Optimiert', lg_start: 'Layer-Start',
+      st_read: 'Lese Datei …', st_opt: 'Optimiere …', st_check: 'Prüfe Ergebnis …', st_done: 'Fertig in {s} s',
+      st_zip: 'Komprimiere .bgcode …', st_saved: 'Gespeichert.', st_readerr: 'Fehler beim Lesen: ', st_err: 'Fehler: ',
+      fi_bin: 'Binary G-code', fi_layers: 'Layer', fi_slicer: 'Slicer', fi_seam: 'Naht', fi_perim: 'Perimeter', fi_unknown: 'unbekannt',
+      fi_conv: 'Absolute Extrusion (M82) wurde in relative (M83) umgewandelt – das Ergebnis verwendet ebenfalls relative Extrusion.',
+      fi_nolayers: 'Keine Layer-Markierungen gefunden – dieser Slicer wird nicht unterstützt.',
+      s_dist: 'Travel-Distanz', s_n1: 'Travels ≥ 1 mm', s_n5: 'Travels ≥ 5 mm', s_layers: 'Geänderte Layer', s_rem: 'Entfernte Mini-Extrusionen',
+      n_new: 'Neue Travels: Retract {r} mm @ {rs} mm/s, Travel {ts} mm/s', n_fw: 'Neue Travels: Firmware-Retract (G10/G11), Travel {ts} mm/s',
+      n_hop: ', Z-Hop {h} mm', n_src: ' (übernommen aus {src}).', src_travel: 'einem vorhandenen Travel', src_layer: 'dem Layerwechsel', src_default: 'Standardwerten',
+      n_de: ' Max. Abweichung der Extrusionsmenge pro Layer: {d} mm Filament.', n_layers: ' ⚠ Layeranzahl unterschiedlich – Ergebnis nicht verwenden!',
+      n_rem: ' Entfernt: {n} Mini-Extrusionen, zusammen {l} mm Pfad / {e} mm Filament.',
+      layer: 'Layer', changed: 'geändert', travels: 'Travels',
+      ERR_NO_LAYERS: 'Keine Layer-Markierungen gefunden. Unterstützt: PrusaSlicer, SuperSlicer, OrcaSlicer, Bambu Studio, Cura, ideaMaker, Simplify3D.',
+      ERR_M82: 'Absolute Extrusion (M82) konnte nicht umgewandelt werden.', ERR_NOT_BGCODE: 'Keine .bgcode-Datei.', ERR_COMPRESSION: 'Unbekannte Kompression in der .bgcode-Datei.',
+      h_about: 'So funktioniert es',
+      about: `<p>Slicer beginnen einen Layer oft weit weg vom Ende des vorherigen Layers oder fahren zu kleinen separaten Inseln und wieder zurück. Bei Materialien, die stark fädeln (Foaming-PLA, LW-PLA, PETG, TPU), hinterlässt jeder Travel ein Haar. Dieses Tool schreibt den G-Code so um, dass</p>
+<ul><li>geschlossene Loops dort beginnen, wo die Düse gerade steht,</li><li>kleine Inseln, die eine Wand berühren, als kurzer Abstecher von dieser Wand gedruckt werden,</li><li>Pfade desselben Feature-Typs in Nächster-Nachbar-Reihenfolge gedruckt werden (offene Pfade auch rückwärts),</li><li>optional winzige alleinstehende Extrusionen entfernt werden.</li></ul>
+<p>Geometrie, Extrusionsmengen, Geschwindigkeiten und die Reihenfolge der Feature-Typen bleiben gleich; nur Startpunkte und die Reihenfolge der Pfade ändern sich. Ein Layer wird nur umgeschrieben, wenn seine Travels kürzer werden, und alles, was das Tool nicht versteht, bleibt unverändert.</p>
+<p><b>Unterstützte Slicer:</b> PrusaSlicer, SuperSlicer, OrcaSlicer, Bambu Studio, Cura, ideaMaker, Simplify3D (normales .gcode) sowie Prusa Binary-.bgcode. Relative und absolute Extrusion, Firmware-Retraction (G10/G11), Z-Hop und Bögen (G2/G3) werden unterstützt. Getestet auf einem Prusa MK4S mit PrusaSlicer-Dateien; andere Slicer wurden mit umgewandelten Dateien getestet – bitte das Ergebnis vor dem Druck in der G-Code-Vorschau deines Slicers prüfen.</p>`,
+      foot: 'Freie Software, gemeinfrei veröffentlicht (<a href="https://unlicense.org">Unlicense</a>). Keine Gewährleistung – Nutzung auf eigene Gefahr. · <a href="https://github.com/sch000f/gcode-travel-optimizer">Quellcode &amp; Issues auf GitHub</a>',
+    },
+  };
+  let lang = 'en';
+  try { lang = localStorage.getItem('gto-lang') || ''; } catch (e) { lang = ''; }
+  if (!I18N[lang]) lang = (navigator.language || '').toLowerCase().startsWith('de') ? 'de' : 'en';
+  const t = (k, vars) => {
+    let s = (I18N[lang][k] !== undefined ? I18N[lang][k] : I18N.en[k]) ?? k;
+    if (vars) for (const v in vars) s = s.split('{' + v + '}').join(vars[v]);
+    return s;
+  };
+  const errText = (e) => I18N.en[e.message] ? t(e.message) : e.message;
+
+  const $ = (id) => document.getElementById(id);
+  let input = null;     // { name, kind, parsed?, text, cfg, slicer, converted, layers }
+  let result = null;    // { text, report, params }
+  let prev = null;      // preview data
+  let ranked = [];      // changed layers, biggest saving first
+  let lastStats = null; // [s0, s1]
+  let lastStatus = null;
+
+  function applyLang() {
+    document.documentElement.lang = lang;
+    document.querySelectorAll('[data-i18n]').forEach(el => { el.textContent = t(el.dataset.i18n); });
+    document.querySelectorAll('[data-i18n-html]').forEach(el => { el.innerHTML = t(el.dataset.i18nHtml); });
+    document.querySelectorAll('.lang button').forEach(b => b.classList.toggle('on', b.dataset.lang === lang));
+    $('o_removeShort').oninput();
+    if (input) showFileInfo();
+    if (lastStats) { showResults(...lastStats); setLayer(+$('lslider').value); }
+    if (lastStatus) status(...lastStatus);
+  }
+  document.querySelectorAll('.lang button').forEach(b => b.onclick = () => {
+    lang = b.dataset.lang;
+    try { localStorage.setItem('gto-lang', lang); } catch (e) { /* optional */ }
+    applyLang();
+  });
+
+  // status takes a key + vars so it can be re-translated
+  const status = (key, vars, err, extra) => {
+    lastStatus = [key, vars, err, extra];
+    $('status').textContent = key ? t(key, vars) + (extra || '') : '';
+    $('status').className = err ? 'err' : '';
+  };
+  const tick = () => new Promise(r => setTimeout(r, 30));
+
+  $('drop').onclick = () => $('file').click();
+  $('drop').ondragover = (e) => { e.preventDefault(); $('drop').classList.add('over'); };
+  $('drop').ondragleave = () => $('drop').classList.remove('over');
+  $('drop').ondrop = (e) => { e.preventDefault(); $('drop').classList.remove('over'); if (e.dataTransfer.files[0]) load(e.dataTransfer.files[0]); };
+  $('file').onchange = () => { if ($('file').files[0]) load($('file').files[0]); };
+
+  function showFileInfo() {
+    const i = input;
+    let info = `${i.name} · ${(i.size / 1e6).toFixed(1)} MB · ${i.kind === 'bgcode' ? t('fi_bin') : 'G-code'} · ${i.layers} ${t('fi_layers')}`;
+    info += ` · ${t('fi_slicer')}: ${i.slicer || t('fi_unknown')}`;
+    if (i.cfg.seam_position) info += ` · ${t('fi_seam')}: ${i.cfg.seam_position}`;
+    if (i.cfg.perimeter_generator) info += ` · ${t('fi_perim')}: ${i.cfg.perimeter_generator}`;
+    if (i.converted) info += '\n' + t('fi_conv');
+    if (!i.layers) info += '\n' + t('fi_nolayers');
+    $('fileinfo').textContent = info;
+  }
+
+  async function load(file) {
+    result = null; lastStats = null; prev = null;
+    ['res', 'layers', 'prev'].forEach(id => $(id).classList.add('hidden'));
+    $('dl').disabled = $('dlg').disabled = true;
+    $('run').disabled = true;
+    status('st_read');
+    await tick();
+    try {
+      const buf = await file.arrayBuffer();
+      const head = new Uint8Array(buf, 0, Math.min(4, buf.byteLength));
+      const isBin = String.fromCharCode(...head) === 'GCDE';
+      let text, parsed = null, cfgText = '';
+      if (isBin) {
+        parsed = await BG.parse(buf);
+        text = parsed.gcode;
+        cfgText = parsed.config;
+      } else {
+        text = new TextDecoder().decode(buf);
+        cfgText = text.length > 400000 ? text.slice(0, 100000) + '\n' + text.slice(-400000) : text;
+      }
+      const slicer = OPT.detectSlicer((parsed ? parsed.meta + '\n' : '') + text + '\n' + cfgText.slice(0, 2000));
+      const conv = OPT.toRelativeE(text);
+      text = conv.text;
+      const cfg = OPT.readConfig(cfgText);
+      const layers = OPT.layerStarts(text.split('\n')).length;
+      input = { name: file.name, size: file.size, kind: isBin ? 'bgcode' : 'gcode', parsed, text, cfg, slicer, converted: conv.converted, layers };
+      const rbt = cfg.retract_before_travel || cfg.retraction_minimum_travel;
+      if (rbt && isFinite(parseFloat(rbt))) $('o_minRetract').value = parseFloat(rbt);
+      showFileInfo();
+      $('run').disabled = !layers;
+      status('');
+    } catch (e) {
+      console.error(e);
+      status('st_readerr', null, true, errText(e));
+    }
+  }
+
+  const nice = (v, d) => OPT.fmt(v, d).replace(/^(-?)\./, '$10.');
+  const num = (id) => parseFloat($(id).value) || 0;
+  function options() {
+    return {
+      rotate: $('o_rotate').checked, detours: $('o_detours').checked, reorder: $('o_reorder').checked,
+      reverse: $('o_reverse').checked, dropLayerRetract: $('o_dropLayerRetract').checked,
+      detourMax: num('o_detourMax'), removeShort: num('o_removeShort'), minRetract: num('o_minRetract'), closeTol: num('o_closeTol'),
+      minGain: num('o_minGain'), rotateMin: num('o_rotateMin'), travelPenalty: num('o_penalty'),
+    };
+  }
+
+  $('run').onclick = async () => {
+    if (!input) return;
+    $('run').disabled = true;
+    status('st_opt');
+    await tick();
+    try {
+      const t0 = performance.now();
+      result = OPT.optimize(input.text, options(), input.cfg);
+      status('st_check');
+      await tick();
+      const s0 = OPT.stats(input.text), s1 = OPT.stats(result.text);
+      lastStats = [s0, s1];
+      showResults(s0, s1);
+      buildPreview();
+      $('dl').disabled = $('dlg').disabled = false;
+      status('st_done', { s: ((performance.now() - t0) / 1000).toFixed(1) });
+    } catch (e) {
+      console.error(e);
+      status('st_err', null, true, errText(e));
+    }
+    $('run').disabled = false;
+  };
+
+  function showResults(s0, s1) {
+    const a = s0.total, b = s1.total;
+    const remByLayer = {}; let nRem = 0, remLen = 0, remE = 0;
+    for (const r of result.report) if (r.removed) { remByLayer[r.layer] = r.remE; nRem += r.removed; remLen += r.remLen; remE += r.remE; }
+    let maxDE = 0;
+    s0.layers.forEach((l, i) => { if (s1.layers[i]) maxDE = Math.max(maxDE, Math.abs(l.e - (remByLayer[i + 1] || 0) - s1.layers[i].e)); });
+    const cell = (k, v0, v1, unit = '') => `<div class="stat"><div class="k">${k}</div><div class="v"><s>${v0}</s>→ ${v1}${unit}</div></div>`;
+    $('stats').innerHTML =
+      cell(t('s_dist'), Math.round(a.dist), Math.round(b.dist), ' mm') +
+      cell(t('s_n1'), a.n1, b.n1) +
+      cell(t('s_n5'), a.n5, b.n5) +
+      `<div class="stat"><div class="k">${t('s_layers')}</div><div class="v">${result.report.length} / ${s0.layers.length}</div></div>` +
+      (nRem ? `<div class="stat"><div class="k">${t('s_rem')}</div><div class="v">${nRem}</div></div>` : '');
+    const P = result.params;
+    let note = P.fw ? t('n_fw', { ts: Math.round(P.travelF / 60) })
+      : t('n_new', { r: nice(P.retract, 3), rs: Math.round(P.rF / 60), ts: Math.round(P.travelF / 60) });
+    if (P.hop > 0) note += t('n_hop', { h: nice(P.hop, 2) });
+    note += t('n_src', { src: t(P.source === 'travel' ? 'src_travel' : P.source === 'layerchange' ? 'src_layer' : 'src_default') });
+    note += t('n_de', { d: maxDE.toFixed(4) });
+    if (s0.layers.length !== s1.layers.length) note += t('n_layers');
+    if (nRem) note += t('n_rem', { n: nRem, l: remLen.toFixed(1), e: remE.toFixed(3) });
+    $('paramnote').textContent = note;
+    $('res').classList.remove('hidden');
+
+    // same measure as the preview: travels of each layer in the original vs. the optimized file
+    ranked = result.report.map(r => {
+      const a = s0.layers[r.layer - 1], b = s1.layers[r.layer - 1] || { dist: 0, n: 0 };
+      return { layer: r.layer, before: a.dist, after: b.dist, nBefore: a.n, nAfter: b.n, removed: r.removed };
+    }).filter(r => r.removed || Math.abs(r.before - r.after) >= 0.05 || r.nBefore !== r.nAfter)
+      .sort((x, y) => (y.before - y.after) - (x.before - x.after));
+    $('tbody').innerHTML = ranked.map(r => `<tr data-l="${r.layer}"><td>${r.layer}</td><td>${r.before.toFixed(1)}</td><td>${r.after.toFixed(1)}</td><td>${r.nBefore}</td><td>${r.nAfter}</td><td>${r.removed || ''}</td></tr>`).join('');
+    $('tbody').onclick = (e) => { const tr = e.target.closest('tr'); if (tr) setLayer(+tr.dataset.l); };
+    $('layers').classList.toggle('hidden', !ranked.length);
+  }
+
+  // ---------- preview ----------
+  function layerIndex(text) {
+    const lines = text.split('\n');
+    return { lines, idx: OPT.layerStarts(lines) };
+  }
+  function buildPreview() {
+    prev = { a: layerIndex(input.text), b: layerIndex(result.text) };
+    $('lslider').max = prev.a.idx.length;
+    $('prev').classList.remove('hidden');
+    setLayer(ranked[0] ? ranked[0].layer : 1);
+  }
+  function layerPaths(L, n) {
+    const a = L.idx[n - 1], b = n < L.idx.length ? L.idx[n] : L.lines.length;
+    // include the end of the previous layer as start position
+    let from = a;
+    while (from > 0 && !/^G[0-3] [^;]*X[^;]*Y/.test(L.lines[from - 1])) from--;
+    const { toks } = OPT.tokenize(L.lines.slice(Math.max(0, from - 1), b));
+    const offset = a - Math.max(0, from - 1);
+    const ext = [], trav = [];
+    let start = null, dist = 0, count = 0, z = null;
+    toks.forEach((tk, i) => {
+      if (i < offset) return;
+      if (tk.t === 'ext') { ext.push([tk.x0, tk.y0, tk.x, tk.y]); if (!start) { start = [tk.x0, tk.y0]; z = tk.z; } }
+      if ((tk.t === 'travel' || tk.t === 'wipe') && (tk.x !== tk.x0 || tk.y !== tk.y0)) {
+        const d = Math.hypot(tk.x - tk.x0, tk.y - tk.y0);
+        trav.push([tk.x0, tk.y0, tk.x, tk.y]); dist += d; if (d >= 0.05) count++;
+      }
+    });
+    return { ext, trav, start, dist, count, z };
+  }
+  function draw(canvas, data, box) {
+    const ctx = canvas.getContext('2d');
+    const cs = getComputedStyle(document.documentElement);
+    const W = canvas.width, H = canvas.height, pad = 30;
+    ctx.fillStyle = cs.getPropertyValue('--panel'); ctx.fillRect(0, 0, W, H);
+    const sc = Math.min((W - 2 * pad) / Math.max(box.w, 1e-3), (H - 2 * pad) / Math.max(box.h, 1e-3));
+    const ox = (W - box.w * sc) / 2, oy = (H - box.h * sc) / 2;
+    const X = (x) => ox + (x - box.x) * sc, Y = (y) => H - (oy + (y - box.y) * sc);
+    ctx.lineCap = 'round';
+    ctx.strokeStyle = cs.getPropertyValue('--ext'); ctx.lineWidth = Math.max(1, Math.min(4, 0.45 * sc));
+    ctx.beginPath();
+    for (const s of data.ext) { ctx.moveTo(X(s[0]), Y(s[1])); ctx.lineTo(X(s[2]), Y(s[3])); }
+    ctx.stroke();
+    ctx.strokeStyle = cs.getPropertyValue('--travel'); ctx.fillStyle = ctx.strokeStyle; ctx.lineWidth = 2;
+    for (const s of data.trav) {
+      ctx.beginPath(); ctx.moveTo(X(s[0]), Y(s[1])); ctx.lineTo(X(s[2]), Y(s[3])); ctx.stroke();
+      ctx.beginPath(); ctx.arc(X(s[2]), Y(s[3]), 3.5, 0, 7); ctx.fill();
+    }
+    if (data.start) {
+      ctx.fillStyle = cs.getPropertyValue('--start');
+      ctx.beginPath(); ctx.arc(X(data.start[0]), Y(data.start[1]), 6, 0, 7); ctx.fill();
+    }
+  }
+  function setLayer(n) {
+    if (!prev) return;
+    n = Math.max(1, Math.min(prev.a.idx.length, n));
+    $('lslider').value = n;
+    const A = layerPaths(prev.a, n), B = layerPaths(prev.b, n);
+    let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
+    for (const d of [A, B]) for (const arr of [d.ext, d.trav]) for (const s of arr) {
+      x0 = Math.min(x0, s[0], s[2]); x1 = Math.max(x1, s[0], s[2]); y0 = Math.min(y0, s[1], s[3]); y1 = Math.max(y1, s[1], s[3]);
+    }
+    if (!isFinite(x0)) { x0 = y0 = 0; x1 = y1 = 1; }
+    const box = { x: x0, y: y0, w: x1 - x0, h: y1 - y0 };
+    draw($('c0'), A, box); draw($('c1'), B, box);
+    $('cap0').textContent = `${A.count} ${t('travels')} · ${A.dist.toFixed(1)} mm`;
+    $('cap1').textContent = `${B.count} ${t('travels')} · ${B.dist.toFixed(1)} mm`;
+    const changed = result.report.some(r => r.layer === n);
+    $('llabel').textContent = `${t('layer')} ${n}` + (A.z !== null ? ` · Z ${nice(A.z, 3)} mm` : '') + (changed ? ` · ${t('changed')}` : '');
+  }
+  $('o_removeShort').oninput = () => { const v = num('o_removeShort'); $('o_removeShortV').textContent = v ? v.toFixed(1) + ' mm' : `0 mm (${t('off')})`; };
+  $('lslider').oninput = () => setLayer(+$('lslider').value);
+  $('lprev').onclick = () => setLayer(+$('lslider').value - 1);
+  $('lnext').onclick = () => setLayer(+$('lslider').value + 1);
+  document.addEventListener('keydown', (e) => {
+    if (!prev || e.target.tagName === 'INPUT' && e.target.type !== 'range') return;
+    if (e.key === 'ArrowLeft') { setLayer(+$('lslider').value - 1); e.preventDefault(); }
+    if (e.key === 'ArrowRight') { setLayer(+$('lslider').value + 1); e.preventDefault(); }
+  });
+
+  // ---------- download ----------
+  function save(blob, name) {
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob); a.download = name;
+    document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(() => URL.revokeObjectURL(a.href), 5000);
+  }
+  const outName = (ext) => input.name.replace(/\.(b?gcode|gco|g)$/i, '') + '_opt.' + ext;
+  $('dl').onclick = async () => {
+    if (!result) return;
+    if (input.kind === 'bgcode') {
+      status('st_zip'); await tick();
+      save(BG.build(input.parsed, result.text, 65535), outName('bgcode'));
+      status('st_saved');
+    } else save(new Blob([result.text], { type: 'text/plain' }), outName('gcode'));
+  };
+  $('dlg').onclick = () => { if (result) save(new Blob([result.text], { type: 'text/plain' }), outName('gcode')); };
+
+  applyLang();
+  window.__app = { load, get result() { return result; }, setLayer, setLang: (l) => { lang = l; applyLang(); } };
+})();
+</script>
+</body>
+</html>

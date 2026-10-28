@@ -14,6 +14,7 @@ Slicers often start a new layer far away from where the previous one ended, or t
 - **Small islands become detours.** A path that touches a wall is printed as a short detour from that wall instead of being travelled to separately. If the nozzle is on the smaller of two touching loops, the bigger one can also be printed as the detour.
 - **Paths are reordered.** Within one feature type, the nearest path is printed next. Open paths such as infill and gap fill may be reversed.
 - **Tiny extrusions can be removed (optional).** Stand-alone extrusions shorter than a set length (0–2 mm) are dropped.
+- **Layer changes are streamlined.** When the new layer starts right next to the end of the previous one, the slicer's lift and travel moves are merged into one short ramp move. Retraction and Z hop are dropped if the slicer only added them for a long travel that no longer exists.
 - **Layer-change retraction can be skipped (optional)** when the move to the next layer is very short.
 
 Geometry, extrusion amounts, speeds and the order of feature types stay the same. Only start points and the order of paths change. A layer is only rewritten if its travels get shorter, and anything the tool does not understand is left untouched.
@@ -59,7 +60,7 @@ The tool is a single self-contained `index.html`, so that it also works offline.
 | [`src/app.js`](src/app.js) | User interface, preview and translations |
 | [`src/style.css`](src/style.css) | Styles |
 
-The copies are for reading only. The page always runs from `index.html`.
+The copies are for reading only. The page always runs from `index.html`. After changing `index.html`, run `perl sync-src.pl` to refresh them.
 
 ## License
 
@@ -81,6 +82,7 @@ Alles läuft lokal im Browser. Deine Dateien werden nirgends hochgeladen. Das ga
 - **Inseln als Abstecher:** Ein Pfad, der eine Wand berührt, wird als kurzer Abstecher von dieser Wand gedruckt, statt separat angefahren zu werden. Steht die Düse auf der kleineren von zwei sich berührenden Konturen, kann auch die grössere als Abstecher gedruckt werden.
 - **Pfade umsortieren:** Innerhalb eines Feature-Typs wird immer der nächstgelegene Pfad als Nächstes gedruckt. Offene Pfade wie Infill und Gap Fill dürfen auch rückwärts gedruckt werden.
 - **Mini-Extrusionen entfernen (optional):** Alleinstehende Pfade unter einer einstellbaren Länge (0–2 mm) werden weggelassen.
+- **Layerwechsel straffen:** Beginnt der neue Layer direkt neben dem Ende des vorherigen, werden die Hub- und Travel-Moves des Slicers zu einem kurzen Rampen-Move zusammengefasst. Retract und Z-Hop entfallen, wenn der Slicer sie nur für einen langen Travel eingefügt hatte, den es nicht mehr gibt.
 - **Retract beim Layerwechsel weglassen (optional),** wenn der Weg zum nächsten Layer sehr kurz ist.
 
 Geometrie, Extrusionsmengen, Geschwindigkeiten und die Reihenfolge der Feature-Typen bleiben gleich. Es ändern sich nur Startpunkte und die Reihenfolge der Pfade. Ein Layer wird nur umgeschrieben, wenn seine Travels kürzer werden, und alles, was das Tool nicht versteht, bleibt unverändert.

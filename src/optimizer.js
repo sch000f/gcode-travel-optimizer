@@ -626,9 +626,68 @@ const OPT = (() => {
     return new Set([...r, ...u]);
   }
 
+  // Layer change with a short travel to the new start: replace the slicer's lift / travel / Z-hop
+  // sequence by one ramp move. Retraction (and wipes) are dropped too if the slicer only added them
+  // because the original travel was long (or if the user asked to drop layer-change retraction).
+  function compactHeader(S, toks, a, hEnd, entry, layerZ, o) {
+    if (!o.compactLayerChange || dist(S.pos, entry) >= o.minRetract) return null;
+    const MOTION = new Set(['travel', 'z', 'f', 'wipe', 'retract', 'unretract', 'fwr', 'fwu']);
+    let pos = -1, rampF = null, zPrev = S.z, eSum = 0, nfr = 0, nfu = 0, hasRetr = false, lastTarget = null;
+    for (let i = a; i < hEnd; i++) {
+      const tk = toks[i];
+      if (tk.t === 'travel' || tk.t === 'z') {
+        if (tk.t === 'travel') lastTarget = [tk.x, tk.y];
+        // Z speed: the slowest feedrate the slicer used for Z moves here (its ramp or "G1 Z.. F720")
+        if (tk.z > zPrev + 1e-6 || (tk.t === 'z' && tk.Fp !== undefined)) rampF = rampF === null ? tk.f : Math.min(rampF, tk.f);
+        zPrev = tk.z;
+        if (tk.t === 'travel' || pos < 0) pos = i;
+      }
+      if (tk.t === 'retract' || tk.t === 'wipe' || tk.t === 'unretract') { eSum += tk.e; hasRetr = true; }
+      if (tk.t === 'fwr') { nfr++; hasRetr = true; }
+      if (tk.t === 'fwu') { nfu++; hasRetr = true; }
+    }
+    if (pos < 0 || Math.abs(toks[hEnd - 1].z - layerZ) > 1e-6) return null;
+    if (hasRetr) {
+      // the original travel decides whether the retraction belonged to the travel or to the layer change
+      const origFrom = [toks[a].x0, toks[a].y0];
+      const origTo = lastTarget || [toks[hEnd].x0, toks[hEnd].y0];
+      const travelCaused = dist(origFrom, origTo) >= o.minRetract;
+      if (!(travelCaused || o.dropLayerRetract) || Math.abs(eSum) > 1e-4 || nfr !== nfu) return null;
+    }
+    const lines = [];
+    for (let i = a; i < hEnd; i++) {
+      const tk = toks[i];
+      if (i === pos) lines.push({ move: true });
+      if (!MOTION.has(tk.t)) lines.push({ tk });
+    }
+    return { lines, rampF: rampF || S.params.zF };
+  }
+
   function emitLayer(S, toks, a, b, L, items, o) {
     const entry = items[0].entry;
     const hEnd = L.headerEnd;
+    const ch = compactHeader(S, toks, a, hEnd, entry, L.layerZ, o);
+    if (ch) {
+      for (const l of ch.lines) {
+        if (!l.move) { vEmit(S, l.tk); continue; }
+        const dz = Math.abs(L.layerZ - S.z), dxy = dist(S.pos, entry);
+        if (dz < 1e-6 && dxy < 1e-3) continue;
+        let line = 'G1';
+        if (dxy >= 1e-3) line += ` X${fmt(entry[0], 3)} Y${fmt(entry[1], 3)}`;
+        if (dz >= 1e-6) line += ` Z${fmt(L.layerZ, 3)}`;
+        const f = dz >= 1e-6 ? ch.rampF : S.params.travelF;
+        S.out.push(`${line} F${fmt(f, 3)}`);
+        S.f = f; S.pos = entry; S.z = L.layerZ; S.sync = true;
+      }
+      S.pos = entry; S.z = L.layerZ; S.sync = true;
+      if (L.headLead) for (const l of L.headLead) S.out.push(l);
+      emitPlan(S, items);
+      for (const l of L.tailLead) S.out.push(l);
+      const lastTok = toks[L.footerStart - 1];
+      S.sync = dist(S.pos, [lastTok.x, lastTok.y]) < 1e-3;
+      for (let i = L.footerStart; i < b; i++) vEmit(S, toks[i]);
+      return;
+    }
     let lastT = -1, firstU = -1;
     for (let i = a; i < hEnd; i++) {
       if (toks[i].t === 'travel') lastT = i;

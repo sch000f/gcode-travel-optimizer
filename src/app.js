@@ -15,6 +15,7 @@
       o_reorder: 'Reorder paths', o_reorder_d: 'Within one feature type the nearest path is always printed next.',
       o_reverse: 'Reverse open paths', o_reverse_d: 'Open paths (infill, gap fill) may be printed starting from their other end.',
       o_minret: 'No retraction on new travels shorter than', o_minret_d: 'Taken from the slicer settings (retract_before_travel) if available.',
+      o_compact: 'Streamline layer changes', o_compact_d: 'If the new layer starts right next to the end of the previous one, the slicer’s lift and travel moves are merged into one short ramp move. Retraction and Z hop are dropped if the slicer only added them for a long travel that no longer exists.',
       o_droplr: 'Skip retraction on layer change', o_droplr_d: 'Only if the travel to the new layer is shorter than the value on the left.',
       advanced: 'Advanced',
       o_close: 'A loop counts as closed if its gap is ≤', o_gain: 'Only change a layer if it saves at least',
@@ -54,6 +55,7 @@
       o_reorder: 'Pfade umsortieren', o_reorder_d: 'Innerhalb eines Feature-Typs wird immer der nächstgelegene Pfad als Nächstes gedruckt.',
       o_reverse: 'Offene Pfade umkehren', o_reverse_d: 'Nicht geschlossene Pfade (Infill, Gap Fill) dürfen vom anderen Ende her gedruckt werden.',
       o_minret: 'Kein Retract bei neuen Travels unter', o_minret_d: 'Wird aus den Slicer-Einstellungen übernommen (retract_before_travel), falls vorhanden.',
+      o_compact: 'Layerwechsel straffen', o_compact_d: 'Beginnt der neue Layer direkt neben dem Ende des vorherigen, werden die Hub- und Travel-Moves des Slicers zu einem kurzen Rampen-Move zusammengefasst. Retract und Z-Hop entfallen, wenn der Slicer sie nur für einen langen Travel eingefügt hatte, den es nicht mehr gibt.',
       o_droplr: 'Retract beim Layerwechsel weglassen', o_droplr_d: 'Nur wenn der Travel zum neuen Layer kürzer als der Wert links ist.',
       advanced: 'Erweitert',
       o_close: 'Loop gilt als geschlossen bei Lücke ≤', o_gain: 'Layer nur ändern, wenn Ersparnis ≥',
@@ -168,8 +170,10 @@
       const cfg = OPT.readConfig(cfgText);
       const layers = OPT.layerStarts(text.split('\n')).length;
       input = { name: file.name, size: file.size, kind: isBin ? 'bgcode' : 'gcode', parsed, text, cfg, slicer, converted: conv.converted, layers };
-      const rbt = cfg.retract_before_travel || cfg.retraction_minimum_travel;
-      if (rbt && isFinite(parseFloat(rbt))) $('o_minRetract').value = parseFloat(rbt);
+      // a filament-specific override (PrusaSlicer: filament_retract_before_travel) wins over the printer value
+      const numOr = (...v) => v.map(x => parseFloat(x)).find(x => isFinite(x));
+      const rbt = numOr(cfg.filament_retract_before_travel, cfg.retract_before_travel, cfg.retraction_minimum_travel);
+      if (rbt !== undefined) $('o_minRetract').value = rbt;
       showFileInfo();
       $('run').disabled = !layers;
       status('');
@@ -184,7 +188,7 @@
   function options() {
     return {
       rotate: $('o_rotate').checked, detours: $('o_detours').checked, reorder: $('o_reorder').checked,
-      reverse: $('o_reverse').checked, dropLayerRetract: $('o_dropLayerRetract').checked,
+      reverse: $('o_reverse').checked, dropLayerRetract: $('o_dropLayerRetract').checked, compactLayerChange: $('o_compact').checked,
       detourMax: num('o_detourMax'), removeShort: num('o_removeShort'), minRetract: num('o_minRetract'), closeTol: num('o_closeTol'),
       minGain: num('o_minGain'), rotateMin: num('o_rotateMin'), travelPenalty: num('o_penalty'),
     };

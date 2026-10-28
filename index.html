@@ -111,6 +111,7 @@ a { color: var(--accent); }
       <label class="opt"><input type="checkbox" id="o_reorder" checked><span><span data-i18n="o_reorder"></span><small data-i18n="o_reorder_d"></small></span></label>
       <label class="opt"><input type="checkbox" id="o_reverse" checked><span><span data-i18n="o_reverse"></span><small data-i18n="o_reverse_d"></small></span></label>
       <label class="opt"><span class="indent"><span data-i18n="o_minret"></span> <input type="number" id="o_minRetract" value="1.5" step="0.1" min="0"> mm<small data-i18n="o_minret_d"></small></span></label>
+      <label class="opt"><input type="checkbox" id="o_compact" checked><span><span data-i18n="o_compact"></span><small data-i18n="o_compact_d"></small></span></label>
       <label class="opt"><input type="checkbox" id="o_dropLayerRetract"><span><span data-i18n="o_droplr"></span><small data-i18n="o_droplr_d"></small></span></label>
     </div>
     <details>
@@ -1014,9 +1015,68 @@ const OPT = (() => {
     return new Set([...r, ...u]);
   }
 
+  // Layer change with a short travel to the new start: replace the slicer's lift / travel / Z-hop
+  // sequence by one ramp move. Retraction (and wipes) are dropped too if the slicer only added them
+  // because the original travel was long (or if the user asked to drop layer-change retraction).
+  function compactHeader(S, toks, a, hEnd, entry, layerZ, o) {
+    if (!o.compactLayerChange || dist(S.pos, entry) >= o.minRetract) return null;
+    const MOTION = new Set(['travel', 'z', 'f', 'wipe', 'retract', 'unretract', 'fwr', 'fwu']);
+    let pos = -1, rampF = null, zPrev = S.z, eSum = 0, nfr = 0, nfu = 0, hasRetr = false, lastTarget = null;
+    for (let i = a; i < hEnd; i++) {
+      const tk = toks[i];
+      if (tk.t === 'travel' || tk.t === 'z') {
+        if (tk.t === 'travel') lastTarget = [tk.x, tk.y];
+        // Z speed: the slowest feedrate the slicer used for Z moves here (its ramp or "G1 Z.. F720")
+        if (tk.z > zPrev + 1e-6 || (tk.t === 'z' && tk.Fp !== undefined)) rampF = rampF === null ? tk.f : Math.min(rampF, tk.f);
+        zPrev = tk.z;
+        if (tk.t === 'travel' || pos < 0) pos = i;
+      }
+      if (tk.t === 'retract' || tk.t === 'wipe' || tk.t === 'unretract') { eSum += tk.e; hasRetr = true; }
+      if (tk.t === 'fwr') { nfr++; hasRetr = true; }
+      if (tk.t === 'fwu') { nfu++; hasRetr = true; }
+    }
+    if (pos < 0 || Math.abs(toks[hEnd - 1].z - layerZ) > 1e-6) return null;
+    if (hasRetr) {
+      // the original travel decides whether the retraction belonged to the travel or to the layer change
+      const origFrom = [toks[a].x0, toks[a].y0];
+      const origTo = lastTarget || [toks[hEnd].x0, toks[hEnd].y0];
+      const travelCaused = dist(origFrom, origTo) >= o.minRetract;
+      if (!(travelCaused || o.dropLayerRetract) || Math.abs(eSum) > 1e-4 || nfr !== nfu) return null;
+    }
+    const lines = [];
+    for (let i = a; i < hEnd; i++) {
+      const tk = toks[i];
+      if (i === pos) lines.push({ move: true });
+      if (!MOTION.has(tk.t)) lines.push({ tk });
+    }
+    return { lines, rampF: rampF || S.params.zF };
+  }
+
   function emitLayer(S, toks, a, b, L, items, o) {
     const entry = items[0].entry;
     const hEnd = L.headerEnd;
+    const ch = compactHeader(S, toks, a, hEnd, entry, L.layerZ, o);
+    if (ch) {
+      for (const l of ch.lines) {
+        if (!l.move) { vEmit(S, l.tk); continue; }
+        const dz = Math.abs(L.layerZ - S.z), dxy = dist(S.pos, entry);
+        if (dz < 1e-6 && dxy < 1e-3) continue;
+        let line = 'G1';
+        if (dxy >= 1e-3) line += ` X${fmt(entry[0], 3)} Y${fmt(entry[1], 3)}`;
+        if (dz >= 1e-6) line += ` Z${fmt(L.layerZ, 3)}`;
+        const f = dz >= 1e-6 ? ch.rampF : S.params.travelF;
+        S.out.push(`${line} F${fmt(f, 3)}`);
+        S.f = f; S.pos = entry; S.z = L.layerZ; S.sync = true;
+      }
+      S.pos = entry; S.z = L.layerZ; S.sync = true;
+      if (L.headLead) for (const l of L.headLead) S.out.push(l);
+      emitPlan(S, items);
+      for (const l of L.tailLead) S.out.push(l);
+      const lastTok = toks[L.footerStart - 1];
+      S.sync = dist(S.pos, [lastTok.x, lastTok.y]) < 1e-3;
+      for (let i = L.footerStart; i < b; i++) vEmit(S, toks[i]);
+      return;
+    }
     let lastT = -1, firstU = -1;
     for (let i = a; i < hEnd; i++) {
       if (toks[i].t === 'travel') lastT = i;
@@ -1064,6 +1124,7 @@ const OPT = (() => {
       o_reorder: 'Reorder paths', o_reorder_d: 'Within one feature type the nearest path is always printed next.',
       o_reverse: 'Reverse open paths', o_reverse_d: 'Open paths (infill, gap fill) may be printed starting from their other end.',
       o_minret: 'No retraction on new travels shorter than', o_minret_d: 'Taken from the slicer settings (retract_before_travel) if available.',
+      o_compact: 'Streamline layer changes', o_compact_d: 'If the new layer starts right next to the end of the previous one, the slicer’s lift and travel moves are merged into one short ramp move. Retraction and Z hop are dropped if the slicer only added them for a long travel that no longer exists.',
       o_droplr: 'Skip retraction on layer change', o_droplr_d: 'Only if the travel to the new layer is shorter than the value on the left.',
       advanced: 'Advanced',
       o_close: 'A loop counts as closed if its gap is ≤', o_gain: 'Only change a layer if it saves at least',
@@ -1103,6 +1164,7 @@ const OPT = (() => {
       o_reorder: 'Pfade umsortieren', o_reorder_d: 'Innerhalb eines Feature-Typs wird immer der nächstgelegene Pfad als Nächstes gedruckt.',
       o_reverse: 'Offene Pfade umkehren', o_reverse_d: 'Nicht geschlossene Pfade (Infill, Gap Fill) dürfen vom anderen Ende her gedruckt werden.',
       o_minret: 'Kein Retract bei neuen Travels unter', o_minret_d: 'Wird aus den Slicer-Einstellungen übernommen (retract_before_travel), falls vorhanden.',
+      o_compact: 'Layerwechsel straffen', o_compact_d: 'Beginnt der neue Layer direkt neben dem Ende des vorherigen, werden die Hub- und Travel-Moves des Slicers zu einem kurzen Rampen-Move zusammengefasst. Retract und Z-Hop entfallen, wenn der Slicer sie nur für einen langen Travel eingefügt hatte, den es nicht mehr gibt.',
       o_droplr: 'Retract beim Layerwechsel weglassen', o_droplr_d: 'Nur wenn der Travel zum neuen Layer kürzer als der Wert links ist.',
       advanced: 'Erweitert',
       o_close: 'Loop gilt als geschlossen bei Lücke ≤', o_gain: 'Layer nur ändern, wenn Ersparnis ≥',
@@ -1217,8 +1279,10 @@ const OPT = (() => {
       const cfg = OPT.readConfig(cfgText);
       const layers = OPT.layerStarts(text.split('\n')).length;
       input = { name: file.name, size: file.size, kind: isBin ? 'bgcode' : 'gcode', parsed, text, cfg, slicer, converted: conv.converted, layers };
-      const rbt = cfg.retract_before_travel || cfg.retraction_minimum_travel;
-      if (rbt && isFinite(parseFloat(rbt))) $('o_minRetract').value = parseFloat(rbt);
+      // a filament-specific override (PrusaSlicer: filament_retract_before_travel) wins over the printer value
+      const numOr = (...v) => v.map(x => parseFloat(x)).find(x => isFinite(x));
+      const rbt = numOr(cfg.filament_retract_before_travel, cfg.retract_before_travel, cfg.retraction_minimum_travel);
+      if (rbt !== undefined) $('o_minRetract').value = rbt;
       showFileInfo();
       $('run').disabled = !layers;
       status('');
@@ -1233,7 +1297,7 @@ const OPT = (() => {
   function options() {
     return {
       rotate: $('o_rotate').checked, detours: $('o_detours').checked, reorder: $('o_reorder').checked,
-      reverse: $('o_reverse').checked, dropLayerRetract: $('o_dropLayerRetract').checked,
+      reverse: $('o_reverse').checked, dropLayerRetract: $('o_dropLayerRetract').checked, compactLayerChange: $('o_compact').checked,
       detourMax: num('o_detourMax'), removeShort: num('o_removeShort'), minRetract: num('o_minRetract'), closeTol: num('o_closeTol'),
       minGain: num('o_minGain'), rotateMin: num('o_rotateMin'), travelPenalty: num('o_penalty'),
     };

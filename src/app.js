@@ -20,7 +20,7 @@
       advanced: 'Advanced',
       o_close: 'A loop counts as closed if its gap is ≤', o_gain: 'Only change a layer if it saves at least',
       o_rotmin: 'Only move a loop start if it gains at least', o_pen: 'Penalty per travel (prefers fewer travels)',
-      run: 'Optimize', dl: 'Download', dlg: 'Download as .gcode',
+      run: 'Optimize', dl: 'Download .bgcode', dlg: 'Download .gcode',
       h_res: 'Result', h_layers: 'Changed layers (biggest saving first, travel in mm)',
       th_tb: 'Travel before', th_after: 'after', th_nb: 'Travels before', th_rem: 'removed',
       h_prev: 'Preview', optimized: 'Optimized', lg_start: 'Layer start',
@@ -60,7 +60,7 @@
       advanced: 'Erweitert',
       o_close: 'Loop gilt als geschlossen bei Lücke ≤', o_gain: 'Layer nur ändern, wenn Ersparnis ≥',
       o_rotmin: 'Loop-Start nur verschieben ab Gewinn von', o_pen: 'Strafkosten pro Travel (bevorzugt weniger Travels)',
-      run: 'Optimieren', dl: 'Herunterladen', dlg: 'Als .gcode herunterladen',
+      run: 'Optimieren', dl: '.bgcode herunterladen', dlg: '.gcode herunterladen',
       h_res: 'Ergebnis', h_layers: 'Geänderte Layer (grösste Ersparnis zuerst, Travel in mm)',
       th_tb: 'Travel vorher', th_after: 'nachher', th_nb: 'Travels vorher', th_rem: 'entfernt',
       h_prev: 'Vorschau', optimized: 'Optimiert', lg_start: 'Layer-Start',
@@ -176,6 +176,7 @@
       if (rbt !== undefined) $('o_minRetract').value = rbt;
       showFileInfo();
       $('run').disabled = !layers;
+      $('dl').classList.toggle('hidden', input.kind !== 'bgcode');
       status('');
     } catch (e) {
       console.error(e);
@@ -208,7 +209,8 @@
       lastStats = [s0, s1];
       showResults(s0, s1);
       buildPreview();
-      $('dl').disabled = $('dlg').disabled = false;
+      $('dl').disabled = input.kind !== 'bgcode';
+      $('dlg').disabled = false;
       status('st_done', { s: ((performance.now() - t0) / 1000).toFixed(1) });
     } catch (e) {
       console.error(e);
@@ -341,12 +343,10 @@
   }
   const outName = (ext) => input.name.replace(/\.(b?gcode|gco|g)$/i, '') + '_opt.' + ext;
   $('dl').onclick = async () => {
-    if (!result) return;
-    if (input.kind === 'bgcode') {
-      status('st_zip'); await tick();
-      save(BG.build(input.parsed, result.text, 65535), outName('bgcode'));
-      status('st_saved');
-    } else save(new Blob([result.text], { type: 'text/plain' }), outName('gcode'));
+    if (!result || input.kind !== 'bgcode') return;
+    status('st_zip'); await tick();
+    save(BG.build(input.parsed, result.text, 65535), outName('bgcode'));
+    status('st_saved');
   };
   $('dlg').onclick = () => { if (result) save(new Blob([result.text], { type: 'text/plain' }), outName('gcode')); };
 

@@ -15,6 +15,12 @@ const OPT = (() => {
   const MOVE_TYPES = new Set(['ext', 'travel', 'wipe', 'retract', 'unretract', 'z', 'f']);
   // feature-type comments: PrusaSlicer/SuperSlicer/Orca/Cura/ideaMaker (;TYPE:), Bambu/Orca (; FEATURE:), Simplify3D (; feature)
   const TYPE_RE = /^;\s*(TYPE:|FEATURE:|feature )/;
+  // feature types whose paths are never moved (tool-change purge towers)
+  const FIXED_RE = /prime tower|wipe tower|PRIME-TOWER/i;
+  // commands that only set parameters; anything else between moves (macros, probing, conditional
+  // blocks like Bambu's M622/M623, waits) must keep its surrounding moves untouched
+  const HARMLESS_RE = /^\s*(M7[34]|M10[67]|M20[1-5]|M22[01]|M486|M900|M991|G17|G9[02])\b/i;
+  const isHarmless = (tk) => tk.t !== 'other' && tk.t !== 'bad' || HARMLESS_RE.test(tk.raw);
   // layer markers, in order of preference (a file may contain several kinds)
   const LAYER_MARKERS = [
     { id: 'prusa', re: /^;LAYER_CHANGE\b/ },          // PrusaSlicer, SuperSlicer, OrcaSlicer
@@ -83,7 +89,7 @@ const OPT = (() => {
   // ---- tokenizer: classifies every line and tracks the machine state ----
   function tokenize(lines) {
     const toks = new Array(lines.length);
-    let x = 0, y = 0, z = 0, f = 0, accel = null, m82 = false, rel = false;
+    let x = 0, y = 0, z = 0, f = 0, accel = null, m82 = false, rel = false, ftype = '';
     const wordRe = /([A-Za-z])\s*([-+]?(?:\d*\.\d+|\d+\.?))/g;
     for (let i = 0; i < lines.length; i++) {
       const raw = lines[i];
@@ -92,6 +98,7 @@ const OPT = (() => {
       const tk = { raw, x0: x, y0: y, fPrev: f, accelPrev: accel };
       if (!code) {
         tk.t = TYPE_RE.test(raw) ? 'type' : 'comment';
+        if (tk.t === 'type') ftype = raw;
       } else {
         const m = /^([GM])(\d+)(\.\d+)?/i.exec(code);
         const cmd = m ? m[1].toUpperCase() + m[2] : '';
@@ -118,7 +125,8 @@ const OPT = (() => {
           if ('F' in w) { f = w.F; tk.Fp = w.F; }
           tk.e = e;
           if (cmd === 'G2' || cmd === 'G3') {
-            if ('R' in w || hasZ) tk.t = 'bad';
+            if ('R' in w) tk.t = 'bad';
+            else if (hasZ) tk.t = (e > 0 || hasXY) ? 'bad' : 'z'; // spiral Z lift (Bambu Studio)
             else if (!(e > 0)) tk.t = 'wipe'; // arc wipe / non-extruding arc
             else { tk.t = 'ext'; tk.i = w.I || 0; tk.j = w.J || 0; }
           } else if (hasXY && e > 0) tk.t = hasZ ? 'bad' : 'ext';
@@ -140,7 +148,7 @@ const OPT = (() => {
         else if (cmd === 'M204') { tk.t = 'm204'; accel = code; }
         else tk.t = 'other';
       }
-      tk.x = x; tk.y = y; tk.z = z; tk.f = f; tk.accel = accel;
+      tk.x = x; tk.y = y; tk.z = z; tk.f = f; tk.accel = accel; tk.ftype = ftype;
       toks[i] = tk;
     }
     return { toks, m82 };
@@ -229,7 +237,7 @@ const OPT = (() => {
       const tk = toks[i];
       if (tk.t === 'bad') return null;
       if (tk.t === 'ext') {
-        if (!cur) { cur = { segs: [], si: i, ei: i, accel: tk.accelPrev }; chains.push(cur); pend = []; }
+        if (!cur) { cur = { segs: [], si: i, ei: i, accel: tk.accelPrev, fixed: FIXED_RE.test(tk.ftype) }; chains.push(cur); pend = []; }
         const sg = mkSeg(tk);
         const pre = pend.filter(p => p.t !== 'f' && p.raw.trim() !== '').map(p => p.raw);
         if (pre.length) sg.pre = pre;
@@ -254,26 +262,29 @@ const OPT = (() => {
         const tk = toks[i];
         if (!BLOCK_OK.has(tk.t)) boundary = true;
         if (tk.t === 'comment' || tk.t === 'type' || tk.t === 'other' || tk.t === 'm73') {
-          if (tk.raw.trim() !== '' && !/^;\s*WIPE_/.test(tk.raw)) lead.push(tk.raw);
+          if (tk.raw.trim() !== '' && !/^;\s*WIPE_(START|END)\b/.test(tk.raw)) lead.push(tk.raw);
         }
       }
       ch.lead = lead;
+      ch.prev = chains[k - 1];
+      ch.block = toks.slice(chains[k - 1].ei + 1, ch.si);
       if (boundary) runs.push([ch]); else runs[runs.length - 1].push(ch);
     }
     for (const ch of chains) finishChain(ch, o);
     const res = { chains, runs, layerZ, headerEnd: chains[0].si, footerStart: chains[chains.length - 1].ei + 1, removed: [], tailLead: [] };
     // drop short stand-alone extrusions; their state lines move to the next kept chain
     if (o.removeShort > 0) {
-      const keep = chains.filter(ch => ch.len >= o.removeShort);
+      const short = (ch) => ch.len < o.removeShort && !ch.fixed;
+      const keep = chains.filter(ch => !short(ch));
       if (keep.length && keep.length < chains.length) {
         let carry = [];
         for (const ch of chains) {
-          if (ch.len < o.removeShort) { carry = carry.concat(ch.lead); res.removed.push(ch); }
+          if (short(ch)) { carry = carry.concat(ch.lead); res.removed.push(ch); }
           else if (carry.length) { ch.lead = carry.concat(ch.lead); carry = []; }
         }
         res.tailLead = carry;
         res.chains = keep;
-        res.runs = runs.map(r => r.filter(ch => ch.len >= o.removeShort)).filter(r => r.length);
+        res.runs = runs.map(r => r.filter(ch => !short(ch))).filter(r => r.length);
         // lines that preceded the first kept chain stay at the layer start
         res.headLead = keep[0].lead;
         keep[0].lead = [];
@@ -331,6 +342,12 @@ const OPT = (() => {
     let pos = startPos;
     const items = [];
     for (const run of L.runs) {
+      if (run.some(c => c.fixed)) {
+        // runs with prime / wipe tower paths: original order and start points
+        for (const ch of run) items.push({ chain: ch, mode: 'orig', entry: ch.start, exit: ch.end, detours: [] });
+        pos = run[run.length - 1].end;
+        continue;
+      }
       let prefer = null;
       if (detours === 2) {
         let bd = Infinity;
@@ -455,9 +472,16 @@ const OPT = (() => {
 
   function emitPlan(S, items) {
     items.forEach((item, k) => {
-      if (k > 0) {
+      const ch = item.chain;
+      if (k > 0 && ch.fixed && ch.prev === items[k - 1].chain && ch.block) {
+        // between two consecutive tower paths: keep the slicer's moves exactly as they were
+        const d = dist(S.pos, item.entry);
+        S.cost += d + (d >= 0.05 ? o_pen(S) : 0); S.dist += d; if (d >= 0.05) S.nTrav++;
+        if (!S.dry) { S.sync = true; for (const tk of ch.block) vEmit(S, tk); }
+        S.pos = item.entry;
+      } else if (k > 0) {
         travel(S, item.entry);
-        for (const l of item.chain.lead) out(S, l);
+        for (const l of ch.lead) out(S, l);
       }
       emitItem(S, item);
     });
@@ -468,7 +492,16 @@ const OPT = (() => {
     if (tk.t === 'm204') { S.out.push(tk.raw); S.accel = tk.accel; return; }
     if (!MOVE_TYPES.has(tk.t)) { S.out.push(tk.raw); return; }
     let raw = tk.raw;
-    if (!S.sync) {
+    if (!S.sync && tk.t === 'travel') {
+      const code = raw.split(';')[0];
+      const hx = /X\s*[-+.\d]/i.test(code), hy = /Y\s*[-+.\d]/i.test(code);
+      if (hx && hy || !hx && !hy) { raw = setXY(raw, tk.x, tk.y); S.sync = true; }
+      else {
+        // single-axis move (e.g. inside a firmware macro): keep it as written
+        S.pos = [hx ? tk.x : S.pos[0], hy ? tk.y : S.pos[1]];
+        S.sync = dist(S.pos, [tk.x, tk.y]) < 1e-3;
+      }
+    } else if (!S.sync) {
       if (tk.t === 'travel') { raw = setXY(raw, tk.x, tk.y); S.sync = true; }
       else if (tk.t === 'wipe') raw = `G1 E${fmt(tk.e, 5)}` + (tk.Fp !== undefined ? ` F${fmt(tk.Fp, 3)}` : '');
       else if (tk.t === 'ext') { travel(S, [tk.x0, tk.y0]); S.sync = true; }
@@ -642,6 +675,7 @@ const OPT = (() => {
   function compactHeader(S, toks, a, hEnd, entry, layerZ, o) {
     if (!o.compactLayerChange || dist(S.pos, entry) >= o.minRetract) return null;
     const MOTION = new Set(['travel', 'z', 'f', 'wipe', 'retract', 'unretract', 'fwr', 'fwu']);
+    for (let i = a; i < hEnd; i++) if (!isHarmless(toks[i])) return null; // machine macro in the header
     let pos = -1, rampF = null, zPrev = S.z, eSum = 0, nfr = 0, nfu = 0, hasRetr = false, lastTarget = null;
     for (let i = a; i < hEnd; i++) {
       const tk = toks[i];
@@ -698,15 +732,21 @@ const OPT = (() => {
       for (let i = L.footerStart; i < b; i++) vEmit(S, toks[i]);
       return;
     }
+    // moves before the last machine command (macro, probing, conditional block) stay untouched;
+    // only the travel after it is redirected to the new start
+    let guard = a - 1;
+    for (let i = a; i < hEnd; i++) if (!isHarmless(toks[i])) guard = i;
+    const unchanged = dist(entry, [toks[hEnd].x0, toks[hEnd].y0]) < 1e-6;
     let lastT = -1, firstU = -1;
-    for (let i = a; i < hEnd; i++) {
+    for (let i = guard + 1; i < hEnd; i++) {
       if (toks[i].t === 'travel') lastT = i;
       if ((toks[i].t === 'unretract' || toks[i].t === 'fwu') && firstU < 0) firstU = i;
     }
     const skip = layerRetractSkip(toks, a, hEnd, S.pos, entry, o) || new Set();
-    const insertAt = lastT >= 0 ? -1 : (firstU >= 0 ? firstU : hEnd);
+    const insertAt = unchanged || lastT >= 0 ? -1 : (firstU >= 0 ? firstU : hEnd);
     for (let i = a; i < hEnd; i++) {
       const tk = toks[i];
+      if (unchanged || i <= guard) { if (!skip.has(i)) vEmit(S, tk); continue; }
       if (i === insertAt) { S.out.push(`G1 X${fmt(entry[0], 3)} Y${fmt(entry[1], 3)} F${fmt(S.params.travelF, 0)}`); S.f = S.params.travelF; S.pos = entry; S.sync = true; }
       if (skip.has(i)) continue;
       if (tk.t === 'travel') {
@@ -717,6 +757,7 @@ const OPT = (() => {
       } else vEmit(S, tk);
     }
     if (insertAt === hEnd) { S.out.push(`G1 X${fmt(entry[0], 3)} Y${fmt(entry[1], 3)} F${fmt(S.params.travelF, 0)}`); S.f = S.params.travelF; S.pos = entry; }
+    if (unchanged && !S.sync) travel(S, entry); // header had no travel to re-anchor the position
     S.pos = entry; S.z = L.layerZ;
     if (L.headLead) for (const l of L.headLead) S.out.push(l);
     emitPlan(S, items);

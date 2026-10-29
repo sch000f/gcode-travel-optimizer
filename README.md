@@ -27,7 +27,7 @@ The page shows before/after statistics, a list of changed layers and a layer-by-
 |---|---|
 | PrusaSlicer (.gcode and binary .bgcode) | tested on a Prusa MK4S |
 | SuperSlicer, OrcaSlicer | same G-code markers as PrusaSlicer |
-| Bambu Studio | supported (`; CHANGE_LAYER`, `; FEATURE:`) |
+| Bambu Studio | tested with a real multi-material H2D file (spiral Z hop, prime tower and firmware macros are kept as they are) |
 | Cura, ideaMaker | supported (`;LAYER:`, `;TYPE:`), absolute extrusion is converted to relative |
 | Simplify3D | supported (`; layer N, Z = …`, `; feature …`) |
 
@@ -39,7 +39,7 @@ Also handled:
 - wipe moves
 - relative positioning blocks (G91)
 
-Only slicers other than PrusaSlicer were tested with converted files rather than real exports. **Always check the result in your slicer's G-code preview before printing**, and please open an issue if a file does not work.
+Apart from PrusaSlicer and Bambu Studio, slicers were tested with converted files rather than real exports. **Always check the result in your slicer's G-code preview before printing**, and please open an issue if a file does not work.
 
 `.bgcode` files are written back with heatshrink compression and without MeatPack. Thumbnails and metadata are kept.
 
@@ -95,7 +95,7 @@ Die Seite zeigt eine Vorher/Nachher-Statistik, eine Liste der geänderten Layer 
 |---|---|
 | PrusaSlicer (.gcode und binäres .bgcode) | auf einem Prusa MK4S getestet |
 | SuperSlicer, OrcaSlicer | gleiche Markierungen wie PrusaSlicer |
-| Bambu Studio | unterstützt |
+| Bambu Studio | mit einer echten Mehrfarben-Datei (H2D) getestet; Spiral-Z-Hop, Prime Tower und Firmware-Makros bleiben unverändert |
 | Cura, ideaMaker | unterstützt, absolute Extrusion wird in relative umgewandelt |
 | Simplify3D | unterstützt |
 
@@ -107,7 +107,7 @@ Ausserdem unterstützt:
 - Wipes
 - relative Positionierung (G91)
 
-Nur die Slicer ausser PrusaSlicer wurden mit umgewandelten statt echten Dateien getestet. **Das Ergebnis vor dem Druck immer in der G-Code-Vorschau des Slicers prüfen.** Wenn eine Datei nicht funktioniert, freue ich mich über ein Issue.
+Ausser PrusaSlicer und Bambu Studio wurden die Slicer mit umgewandelten statt echten Dateien getestet. **Das Ergebnis vor dem Druck immer in der G-Code-Vorschau des Slicers prüfen.** Wenn eine Datei nicht funktioniert, freue ich mich über ein Issue.
 
 ### Quellcode
 

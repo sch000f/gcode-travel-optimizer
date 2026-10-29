@@ -290,7 +290,7 @@
     const { toks } = OPT.tokenize(L.lines.slice(Math.max(0, from - 1), b));
     const offset = a - Math.max(0, from - 1);
     const ext = [], trav = [];
-    let start = null, dist = 0, count = 0, z = null;
+    let start = null, dist = 0, count = 0, z = null, grp = 0;
     toks.forEach((tk, i) => {
       if (i < offset) return;
       if (tk.t === 'ext') {
@@ -300,9 +300,11 @@
       }
       if ((tk.t === 'travel' || tk.t === 'wipe') && (tk.x !== tk.x0 || tk.y !== tk.y0)) {
         const d = Math.hypot(tk.x - tk.x0, tk.y - tk.y0);
-        trav.push([tk.x0, tk.y0, tk.x, tk.y]); dist += d; if (d >= 0.05) count++;
+        trav.push([tk.x0, tk.y0, tk.x, tk.y]); dist += d; grp += d;
       }
+      if (tk.t === 'ext') { if (grp >= 0.05) count++; grp = 0; }
     });
+    if (grp >= 0.05) count++;
     return { ext, trav, start, dist, count, z };
   }
   function draw(canvas, data, box) {

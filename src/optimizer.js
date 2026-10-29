@@ -15,8 +15,9 @@ const OPT = (() => {
   const MOVE_TYPES = new Set(['ext', 'travel', 'wipe', 'retract', 'unretract', 'z', 'f']);
   // feature-type comments: PrusaSlicer/SuperSlicer/Orca/Cura/ideaMaker (;TYPE:), Bambu/Orca (; FEATURE:), Simplify3D (; feature)
   const TYPE_RE = /^;\s*(TYPE:|FEATURE:|feature )/;
-  // feature types whose paths are never moved (tool-change purge towers)
-  const FIXED_RE = /prime tower|wipe tower|PRIME-TOWER/i;
+  // feature types whose paths are never moved: tool-change purge towers, and visible top surfaces
+  // (their line order, often monotonic, and the slicer's turnarounds between lines shape the finish)
+  const FIXED_RE = /prime tower|wipe tower|PRIME-TOWER|top surface|top solid infill|ironing/i;
   // commands that only set parameters; anything else between moves (macros, probing, conditional
   // blocks like Bambu's M622/M623, waits) must keep its surrounding moves untouched
   const HARMLESS_RE = /^\s*(M7[34]|M10[67]|M20[1-5]|M22[01]|M486|M900|M991|G17|G9[02])\b/i;
@@ -256,11 +257,14 @@ const OPT = (() => {
     chains[0].lead = [];
     for (let k = 1; k < chains.length; k++) {
       const ch = chains[k];
-      let boundary = false;
+      let boundary = false, macro = false, moves = false, bd = 0;
       const lead = [];
       for (let i = chains[k - 1].ei + 1; i < ch.si; i++) {
         const tk = toks[i];
         if (!BLOCK_OK.has(tk.t)) boundary = true;
+        if (!isHarmless(tk)) macro = true;
+        if (MOVE_TYPES.has(tk.t) && tk.t !== 'f') moves = true;
+        if (tk.t === 'travel' || tk.t === 'wipe') bd += dist([tk.x0, tk.y0], [tk.x, tk.y]);
         if (tk.t === 'comment' || tk.t === 'type' || tk.t === 'other' || tk.t === 'm73') {
           if (tk.raw.trim() !== '' && !/^;\s*WIPE_(START|END)\b/.test(tk.raw)) lead.push(tk.raw);
         }
@@ -268,6 +272,10 @@ const OPT = (() => {
       ch.lead = lead;
       ch.prev = chains[k - 1];
       ch.block = toks.slice(chains[k - 1].ei + 1, ch.si);
+      ch.blockDist = bd;
+      // a firmware macro with its own moves (tool change, parking, ...) between two paths:
+      // both neighbours stay where they are so the macro can be kept exactly as written
+      if (macro && moves) { chains[k - 1].fixed = true; ch.fixed = true; }
       if (boundary) runs.push([ch]); else runs[runs.length - 1].push(ch);
     }
     for (const ch of chains) finishChain(ch, o);
@@ -473,9 +481,11 @@ const OPT = (() => {
   function emitPlan(S, items) {
     items.forEach((item, k) => {
       const ch = item.chain;
-      if (k > 0 && ch.fixed && ch.prev === items[k - 1].chain && ch.block) {
-        // between two consecutive tower paths: keep the slicer's moves exactly as they were
-        const d = dist(S.pos, item.entry);
+      const p = k > 0 ? items[k - 1] : null;
+      if (p && ch.prev === p.chain && ch.block && item.mode === 'orig' && p.mode === 'orig' && !(p.detours && p.detours.length)) {
+        // two paths that stay in their original order and direction: keep the slicer's moves
+        // between them exactly as written (wipes, Z hop, turnarounds, macros)
+        const d = ch.blockDist;
         S.cost += d + (d >= 0.05 ? o_pen(S) : 0); S.dist += d; if (d >= 0.05) S.nTrav++;
         if (!S.dry) { S.sync = true; for (const tk of ch.block) vEmit(S, tk); }
         S.pos = item.entry;
@@ -557,21 +567,25 @@ const OPT = (() => {
     const { toks } = tokenize(lines);
     const isStart = new Set(layerStarts(lines));
     const layers = [];
-    let cur = { dist: 0, n: 0, n1: 0, e: 0 }, started = false, total = { dist: 0, n: 0, n1: 0, n5: 0 };
+    // one travel = all non-extruding moves between two extrusions (a slicer may split it into several)
+    let cur = { dist: 0, n: 0, n1: 0, e: 0 }, started = false, total = { dist: 0, n: 0, n1: 0, n5: 0 }, grp = 0;
+    const close = () => {
+      if (grp >= 0.05) { cur.n++; total.n++; }
+      if (grp >= 1) { cur.n1++; total.n1++; }
+      if (grp >= 5) total.n5++;
+      grp = 0;
+    };
     for (let i = 0; i < toks.length; i++) {
       const tk = toks[i];
-      if (isStart.has(i)) { if (started) layers.push(cur); cur = { dist: 0, n: 0, n1: 0, e: 0 }; started = true; }
+      if (isStart.has(i)) { if (started) { close(); layers.push(cur); } cur = { dist: 0, n: 0, n1: 0, e: 0 }; started = true; grp = 0; }
       if (!started) continue;
       if (tk.t === 'travel' || tk.t === 'wipe') {
         const d = dist([tk.x0, tk.y0], [tk.x, tk.y]);
-        cur.dist += d; total.dist += d;
-        if (d >= 0.05) { cur.n++; total.n++; }
-        if (d >= 1) { cur.n1++; total.n1++; }
-        if (d >= 5) total.n5++;
+        cur.dist += d; total.dist += d; grp += d;
       }
-      if (tk.t === 'ext') cur.e += tk.e;
+      if (tk.t === 'ext') { close(); cur.e += tk.e; }
     }
-    if (started) layers.push(cur);
+    if (started) { close(); layers.push(cur); }
     return { layers, total };
   }
 
@@ -606,15 +620,17 @@ const OPT = (() => {
       const startPos = S.pos;
       if (L) {
         // original travel cost from the actual start position
-        let oc = 0, on = 0, first = true;
+        // (all moves between two extrusions count as one travel, like in the plan)
+        let oc = 0, on = 0, first = true, grp = 0;
+        const closeGrp = () => { oc += grp; if (grp >= 0.05) { on++; oc += o.travelPenalty; } grp = 0; };
         for (let i = a; i < L.footerStart; i++) {
           const tk = toks[i];
           if (tk.t === 'travel' || tk.t === 'wipe') {
-            const d = dist(first ? startPos : [tk.x0, tk.y0], [tk.x, tk.y]);
+            grp += dist(first ? startPos : [tk.x0, tk.y0], [tk.x, tk.y]);
             first = false;
-            oc += d; if (d >= 0.05) { on++; oc += o.travelPenalty; }
-          } else if (tk.t === 'ext' && first) {
-            const d = dist(startPos, [tk.x0, tk.y0]); first = false; oc += d; if (d >= 0.05) { on++; oc += o.travelPenalty; }
+          } else if (tk.t === 'ext') {
+            if (first) { grp += dist(startPos, [tk.x0, tk.y0]); first = false; }
+            closeGrp();
           }
         }
         let best = null;

@@ -265,6 +265,23 @@
     $('prev').classList.remove('hidden');
     setLayer(ranked[0] ? ranked[0].layer : 1);
   }
+  // G2 (clockwise) / G3 (counter-clockwise) arc around start + (I, J), split into short lines for drawing
+  function arcSegments(tk, out) {
+    const cx = tk.x0 + tk.i, cy = tk.y0 + tk.j;
+    const r = Math.hypot(tk.i, tk.j);
+    const a0 = Math.atan2(tk.y0 - cy, tk.x0 - cx);
+    let sweep = Math.atan2(tk.y - cy, tk.x - cx) - a0;
+    if (tk.cmd === 'G3') { if (sweep <= 1e-9) sweep += 2 * Math.PI; }
+    else if (sweep >= -1e-9) sweep -= 2 * Math.PI;
+    const n = Math.max(1, Math.min(256, Math.ceil(Math.abs(sweep) * r / 0.2), Math.ceil(Math.abs(sweep) / 0.05)));
+    let px = tk.x0, py = tk.y0;
+    for (let k = 1; k <= n; k++) {
+      const a = a0 + sweep * k / n;
+      const qx = k === n ? tk.x : cx + r * Math.cos(a), qy = k === n ? tk.y : cy + r * Math.sin(a);
+      out.push([px, py, qx, qy]);
+      px = qx; py = qy;
+    }
+  }
   function layerPaths(L, n) {
     const a = L.idx[n - 1], b = n < L.idx.length ? L.idx[n] : L.lines.length;
     // include the end of the previous layer as start position
@@ -276,7 +293,11 @@
     let start = null, dist = 0, count = 0, z = null;
     toks.forEach((tk, i) => {
       if (i < offset) return;
-      if (tk.t === 'ext') { ext.push([tk.x0, tk.y0, tk.x, tk.y]); if (!start) { start = [tk.x0, tk.y0]; z = tk.z; } }
+      if (tk.t === 'ext') {
+        if ((tk.cmd === 'G2' || tk.cmd === 'G3') && tk.i !== undefined) arcSegments(tk, ext);
+        else ext.push([tk.x0, tk.y0, tk.x, tk.y]);
+        if (!start) { start = [tk.x0, tk.y0]; z = tk.z; }
+      }
       if ((tk.t === 'travel' || tk.t === 'wipe') && (tk.x !== tk.x0 || tk.y !== tk.y0)) {
         const d = Math.hypot(tk.x - tk.x0, tk.y - tk.y0);
         trav.push([tk.x0, tk.y0, tk.x, tk.y]); dist += d; if (d >= 0.05) count++;

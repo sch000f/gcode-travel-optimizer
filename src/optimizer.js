@@ -166,7 +166,17 @@ const OPT = (() => {
   function mkSeg(tk) {
     const cmd = tk.cmd === 'G0' ? 'G1' : tk.cmd;
     const a = [tk.x0, tk.y0], b = [tk.x, tk.y];
-    return { cmd, a, b, e: tk.e, f: tk.f, c: cmd === 'G1' ? null : [tk.x0 + tk.i, tk.y0 + tk.j], len: dist(a, b), pre: null };
+    if (cmd === 'G1') return { cmd, a, b, e: tk.e, f: tk.f, c: null, len: dist(a, b), pre: null };
+    const c = [tk.x0 + tk.i, tk.y0 + tk.j];
+    return { cmd, a, b, e: tk.e, f: tk.f, c, len: arcLen(cmd, a, b, c), pre: null };
+  }
+  // true length of a G2 (clockwise) / G3 (counter-clockwise) arc; start == end is a full circle
+  function arcLen(cmd, a, b, c) {
+    const r = dist(a, c);
+    let sweep = Math.atan2(b[1] - c[1], b[0] - c[0]) - Math.atan2(a[1] - c[1], a[0] - c[0]);
+    if (cmd === 'G3') { if (sweep <= 1e-9) sweep += 2 * Math.PI; }
+    else if (sweep >= -1e-9) sweep -= 2 * Math.PI;
+    return r * Math.abs(sweep);
   }
   const segPt = (s, t) => t <= 0 ? s.a : t >= 1 ? s.b : [s.a[0] + (s.b[0] - s.a[0]) * t, s.a[1] + (s.b[1] - s.a[1]) * t];
   function nearestOnChain(ch, p) {

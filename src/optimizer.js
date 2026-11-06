@@ -20,6 +20,9 @@ const OPT = (() => {
   const FIXED_RE = /prime tower|wipe tower|PRIME-TOWER|top surface|top solid infill|ironing/i;
   // commands that only set parameters; anything else between moves (macros, probing, conditional
   // blocks like Bambu's M622/M623, waits) must keep its surrounding moves untouched
+  // feature types that may be mixed with each other if the user allows it (not bridges, overhangs, supports, brim)
+  const MIX_RE = /perimeter|wall|infill|gap fill|FILL|SKIN/i, NO_MIX_RE = /bridge|overhang|support|skirt|brim|custom|top/i;
+  const mixable = (ch) => MIX_RE.test(ch.ftype || '') && !NO_MIX_RE.test(ch.ftype || '');
   const HARMLESS_RE = /^\s*(M7[34]|M10[67]|M20[1-5]|M22[01]|M486|M900|M991|G17|G9[02])\b/i;
   const isHarmless = (tk) => tk.t !== 'other' && tk.t !== 'bad' || HARMLESS_RE.test(tk.raw);
   // layer markers, in order of preference (a file may contain several kinds)
@@ -216,6 +219,11 @@ const OPT = (() => {
     ch.start = segs[0].a; ch.end = segs[n - 1].b;
     ch.len = segs.reduce((s, g) => s + g.len, 0);
     ch.gap = dist(ch.start, ch.end);
+    const bb = ch.bbox = [Infinity, Infinity, -Infinity, -Infinity];
+    for (const g of segs) for (const p of [g.a, g.b]) {
+      if (p[0] < bb[0]) bb[0] = p[0]; if (p[1] < bb[1]) bb[1] = p[1];
+      if (p[0] > bb[2]) bb[2] = p[0]; if (p[1] > bb[3]) bb[3] = p[1];
+    }
     ch.closed = n >= 3 && ch.gap <= o.closeTol && ch.len > 4 * Math.max(ch.gap, 0.05);
     if (ch.closed && ch.gap > 1e-4) {
       const last = segs[n - 1];
@@ -231,14 +239,14 @@ const OPT = (() => {
   // ---- split a layer into extrusion chains / travel blocks ----
   const CHAIN_INNER = new Set(['f', 'comment', 'm73', 'g92']);
   const BLOCK_OK = new Set(['travel', 'wipe', 'retract', 'unretract', 'fwr', 'fwu', 'z', 'f', 'g92', 'm204', 'comment', 'm73']);
-  function analyzeLayer(toks, a, b, o) {
+  function analyzeLayer(toks, a, b, o, li) {
     const chains = [];
     let cur = null, pend = [];
     for (let i = a; i < b; i++) {
       const tk = toks[i];
       if (tk.t === 'bad') return null;
       if (tk.t === 'ext') {
-        if (!cur) { cur = { segs: [], si: i, ei: i, accel: tk.accelPrev, fixed: FIXED_RE.test(tk.ftype) }; chains.push(cur); pend = []; }
+        if (!cur) { cur = { segs: [], si: i, ei: i, accel: tk.accelPrev, fixed: FIXED_RE.test(tk.ftype), ftype: tk.ftype }; chains.push(cur); pend = []; }
         const sg = mkSeg(tk);
         const pre = pend.filter(p => p.t !== 'f' && p.raw.trim() !== '').map(p => p.raw);
         if (pre.length) sg.pre = pre;
@@ -257,15 +265,16 @@ const OPT = (() => {
     chains[0].lead = [];
     for (let k = 1; k < chains.length; k++) {
       const ch = chains[k];
-      let boundary = false, macro = false, moves = false, bd = 0;
+      let boundary = false, typeChange = false, macro = false, moves = false, bd = 0;
       const lead = [];
       for (let i = chains[k - 1].ei + 1; i < ch.si; i++) {
         const tk = toks[i];
-        if (!BLOCK_OK.has(tk.t)) boundary = true;
+        if (tk.t === 'type') typeChange = true;
+        else if (!BLOCK_OK.has(tk.t)) boundary = true;
         if (!isHarmless(tk)) macro = true;
         if (MOVE_TYPES.has(tk.t) && tk.t !== 'f') moves = true;
         if (tk.t === 'travel' || tk.t === 'wipe') bd += dist([tk.x0, tk.y0], [tk.x, tk.y]);
-        if (tk.t === 'comment' || tk.t === 'type' || tk.t === 'other' || tk.t === 'm73') {
+        if (tk.t === 'comment' || tk.t === 'other' || tk.t === 'm73') {
           if (tk.raw.trim() !== '' && !/^;\s*WIPE_(START|END)\b/.test(tk.raw)) lead.push(tk.raw);
         }
       }
@@ -276,7 +285,16 @@ const OPT = (() => {
       // a firmware macro with its own moves (tool change, parking, ...) between two paths:
       // both neighbours stay where they are so the macro can be kept exactly as written
       if (macro && moves) { chains[k - 1].fixed = true; ch.fixed = true; }
-      if (boundary) runs.push([ch]); else runs[runs.length - 1].push(ch);
+      const prevC = chains[k - 1];
+      // a change of feature type ends a run, unless the user allows mixing these types (never on the first layer)
+      if (typeChange && !(o.mixFeatures && li > 0 && !ch.fixed && !prevC.fixed && mixable(ch) && mixable(prevC))) boundary = true;
+      if (boundary) {
+        // state lines of a new run belong to the start of the run, whichever path is printed first
+        const r = [ch];
+        r.lead = ch.lead;
+        ch.lead = [];
+        runs.push(r);
+      } else runs[runs.length - 1].push(ch);
     }
     for (const ch of chains) finishChain(ch, o);
     const res = { chains, runs, layerZ, headerEnd: chains[0].si, footerStart: chains[chains.length - 1].ei + 1, removed: [], tailLead: [] };
@@ -292,7 +310,14 @@ const OPT = (() => {
         }
         res.tailLead = carry;
         res.chains = keep;
-        res.runs = runs.map(r => r.filter(ch => !short(ch))).filter(r => r.length);
+        let pendLead = [];
+        res.runs = [];
+        for (const r of runs) {
+          const f = r.filter(ch => !short(ch));
+          const l = pendLead.concat(r.lead || []);
+          if (f.length) { f.lead = l; pendLead = []; res.runs.push(f); } else pendLead = l;
+        }
+        res.tailLead = res.tailLead.concat(pendLead);
         // lines that preceded the first kept chain stay at the layer start
         res.headLead = keep[0].lead;
         keep[0].lead = [];
@@ -324,6 +349,9 @@ const OPT = (() => {
       let best = null;
       for (const H of chains) {
         if (H === X || !H.closed || isDetour.has(H) || (H.len <= X.len && H !== prefer)) continue;
+        // bounding boxes too far apart for a detour
+        const gx = Math.max(H.bbox[0] - X.bbox[2], X.bbox[0] - H.bbox[2], 0), gy = Math.max(H.bbox[1] - X.bbox[3], X.bbox[1] - H.bbox[3], 0);
+        if (Math.hypot(gx, gy) * (X.closed ? 2 : 1) > o.detourMax) continue;
         if (X.closed) {
           X.segs.forEach((sg, k) => {
             const nq = nearestOnChain(H, sg.a), c = 2 * nq.d + X.gap;
@@ -353,6 +381,7 @@ const OPT = (() => {
       if (run.some(c => c.fixed)) {
         // runs with prime / wipe tower paths: original order and start points
         for (const ch of run) items.push({ chain: ch, mode: 'orig', entry: ch.start, exit: ch.end, detours: [] });
+        items[items.length - run.length].runLead = run.lead;
         pos = run[run.length - 1].end;
         continue;
       }
@@ -363,6 +392,7 @@ const OPT = (() => {
       }
       const { hostMap, isDetour } = detours ? assignDetours(run, o, prefer) : { hostMap: new Map(), isDetour: new Set() };
       const rem = run.filter(c => !isDetour.has(c));
+      const firstIdx = items.length;
       let firstOfRun = true;
       while (rem.length) {
         let pick = 0, be = bestEntry(rem[0], pos, o);
@@ -377,6 +407,7 @@ const OPT = (() => {
         pos = be.exit;
         firstOfRun = false;
       }
+      if (items[firstIdx]) items[firstIdx].runLead = run.lead;
     }
     return items;
   }
@@ -452,7 +483,11 @@ const OPT = (() => {
 
   function emitItem(S, item) {
     const ch = item.chain;
-    if (ch.accel && ch.accel !== S.accel) { out(S, ch.accel); S.accel = ch.accel; }
+    const state = () => {
+      if (ch.ftype && ch.ftype !== S.ftype) { out(S, ch.ftype); S.ftype = ch.ftype; }
+      if (ch.accel && ch.accel !== S.accel) { out(S, ch.accel); S.accel = ch.accel; }
+    };
+    state();
     for (const op of buildOps(item)) {
       if (op.detour) {
         const q = S.pos;
@@ -460,7 +495,7 @@ const OPT = (() => {
         if (op.detour.chain.lead) for (const l of op.detour.chain.lead) out(S, l);
         emitItem(S, op.detour);
         travel(S, q);
-        if (ch.accel && ch.accel !== S.accel) { out(S, ch.accel); S.accel = ch.accel; }
+        state();
         continue;
       }
       const sg = op.seg;
@@ -489,9 +524,10 @@ const OPT = (() => {
         S.cost += d + (d >= 0.05 ? o_pen(S) : 0); S.dist += d; if (d >= 0.05) S.nTrav++;
         if (!S.dry) { S.sync = true; for (const tk of ch.block) vEmit(S, tk); }
         S.pos = item.entry;
-      } else if (k > 0) {
-        travel(S, item.entry);
-        for (const l of ch.lead) out(S, l);
+      } else {
+        if (k > 0) travel(S, item.entry);
+        if (item.runLead) for (const l of item.runLead) out(S, l);
+        if (k > 0) for (const l of ch.lead) out(S, l);
       }
       emitItem(S, item);
     });
@@ -500,7 +536,9 @@ const OPT = (() => {
   // ---- verbatim emission that repairs position / modal state after a modified layer ----
   function vEmit(S, tk) {
     if (tk.t === 'm204') { S.out.push(tk.raw); S.accel = tk.accel; return; }
+    if (tk.t === 'type') S.ftype = tk.raw;
     if (!MOVE_TYPES.has(tk.t)) { S.out.push(tk.raw); return; }
+    if (tk.t === 'ext' && tk.ftype && tk.ftype !== S.ftype) { S.out.push(tk.ftype); S.ftype = tk.ftype; }
     let raw = tk.raw;
     if (!S.sync && tk.t === 'travel') {
       const code = raw.split(';')[0];
@@ -610,12 +648,12 @@ const OPT = (() => {
     for (let i = starts[starts.length - 1]; i < lines.length; i++) if (END_RE.test(lines[i])) { endIdx = i; break; }
     const params = learnParams(toks, starts[0], cfg);
 
-    const S = { out: [], pos: [0, 0], f: 0, z: 0, accel: null, sync: true, params, o, dry: false, cost: 0, dist: 0, nTrav: 0, nRetr: 0, e: 0 };
+    const S = { out: [], pos: [0, 0], f: 0, z: 0, accel: null, ftype: '', sync: true, params, o, dry: false, cost: 0, dist: 0, nTrav: 0, nRetr: 0, e: 0 };
     for (let i = 0; i < starts[0]; i++) vEmit(S, toks[i]);
     const report = [];
     for (let li = 0; li < starts.length; li++) {
       const a = starts[li], b = li + 1 < starts.length ? starts[li + 1] : endIdx;
-      const L = analyzeLayer(toks, a, b, o);
+      const L = analyzeLayer(toks, a, b, o, li);
       let done = false;
       const startPos = S.pos;
       if (L) {
@@ -639,7 +677,7 @@ const OPT = (() => {
         if (o.detours) for (const dm of [1, 2]) { combos.push([false, dm]); if (o.reorder) combos.push([true, dm]); }
         for (const [g, d] of combos) {
           const items = buildPlan(L, startPos, o, g, d);
-          const D = { dry: true, pos: startPos, f: S.f, z: L.layerZ, accel: S.accel, params, o, cost: 0, dist: 0, nTrav: 0, nRetr: 0, e: 0 };
+          const D = { dry: true, pos: startPos, f: S.f, z: L.layerZ, accel: S.accel, ftype: S.ftype, params, o, cost: 0, dist: 0, nTrav: 0, nRetr: 0, e: 0 };
           const d0 = dist(startPos, items[0].entry);
           D.cost += d0 + (d0 >= 0.05 ? o.travelPenalty : 0); D.dist += d0; if (d0 >= 0.05) D.nTrav++;
           D.pos = items[0].entry;

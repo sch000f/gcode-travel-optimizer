@@ -9,6 +9,8 @@ All changes to the tool, newest first.
 - **Mix walls and infill** (off by default, from layer 2 on): walls and infill may be printed in any order if that saves travel. This changes the print order, so infill can be printed before the wall it touches. Bridges, overhangs, top surfaces and supports are not mixed. ([18c7efa](https://github.com/sch000f/gcode-travel-optimizer/commit/18c7efa))
 
 ### Changed
+- Small wall loops (up to 10 mm, from layer 2 on) can be printed as a detour from a neighbouring wall of another type. Narrow parts no longer need trips from one end to the other for tiny inner loops (Cover Top: 8728 → 1664 mm of travel). This is the one exception to the fixed order of feature types. ([d0f0d7f](https://github.com/sch000f/gcode-travel-optimizer/commit/d0f0d7f))
+- "Remove stand-alone extrusions" now also catches tiny stray pieces of top surfaces. Towers, brims and skirts stay protected. ([d0f0d7f](https://github.com/sch000f/gcode-travel-optimizer/commit/d0f0d7f))
 - Large files run about 10x faster, thanks to a bounding-box check in the detour search. ([18c7efa](https://github.com/sch000f/gcode-travel-optimizer/commit/18c7efa))
 
 ### Fixed

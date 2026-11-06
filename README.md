@@ -21,7 +21,7 @@ Slicers often start a new layer far away from where the previous one ended, or t
 
 Geometry, extrusion amounts, speeds and (unless mixing is enabled) the order of feature types stay the same. Only start points and the order of paths change. A layer is only rewritten if its travels get shorter, and anything the tool does not understand is left untouched.
 
-Where two paths keep their order, the slicer's own moves between them (wipes, Z hop, turnarounds) are kept exactly as written. Top surfaces, ironing and prime/wipe towers are never reordered, so monotonic top surfaces look the same as before. Firmware macros (tool changes, nozzle camera, timelapse) stay in place together with the paths around them.
+Where two paths keep their order, the slicer's own moves between them (wipes, Z hop, turnarounds) are kept exactly as written. Top surfaces, ironing, brims, skirts and prime/wipe towers are never reordered, so monotonic top surfaces look the same as before. Firmware macros (tool changes, nozzle camera, timelapse) stay in place together with the paths around them.
 
 In the statistics, one travel means all non-printing moves between two extrusions, even if the slicer writes them as several lines.
 
@@ -95,7 +95,7 @@ Alles läuft lokal im Browser. Deine Dateien werden nirgends hochgeladen. Das ga
 
 Geometrie, Extrusionsmengen, Geschwindigkeiten und (ohne Mischen) die Reihenfolge der Feature-Typen bleiben gleich. Es ändern sich nur Startpunkte und die Reihenfolge der Pfade. Ein Layer wird nur umgeschrieben, wenn seine Travels kürzer werden, und alles, was das Tool nicht versteht, bleibt unverändert.
 
-Wo zwei Pfade ihre Reihenfolge behalten, bleiben die Moves des Slicers dazwischen (Wipes, Z-Hop, Wendemanöver) genau so, wie er sie geschrieben hat. Top Surfaces, Ironing und Prime/Wipe Tower werden nie umsortiert, monotone Oberflächen sehen also gleich aus wie vorher. Firmware-Makros (Werkzeugwechsel, Düsenkamera, Timelapse) bleiben zusammen mit den Pfaden drumherum an ihrem Platz.
+Wo zwei Pfade ihre Reihenfolge behalten, bleiben die Moves des Slicers dazwischen (Wipes, Z-Hop, Wendemanöver) genau so, wie er sie geschrieben hat. Top Surfaces, Ironing, Brims, Skirts und Prime/Wipe Tower werden nie umsortiert, monotone Oberflächen sehen also gleich aus wie vorher. Firmware-Makros (Werkzeugwechsel, Düsenkamera, Timelapse) bleiben zusammen mit den Pfaden drumherum an ihrem Platz.
 
 In der Statistik zählt ein Travel alle Leerfahrten zwischen zwei Extrusionen, auch wenn der Slicer sie in mehrere Zeilen aufteilt.
 

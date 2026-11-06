@@ -15,9 +15,10 @@ const OPT = (() => {
   const MOVE_TYPES = new Set(['ext', 'travel', 'wipe', 'retract', 'unretract', 'z', 'f']);
   // feature-type comments: PrusaSlicer/SuperSlicer/Orca/Cura/ideaMaker (;TYPE:), Bambu/Orca (; FEATURE:), Simplify3D (; feature)
   const TYPE_RE = /^;\s*(TYPE:|FEATURE:|feature )/;
-  // feature types whose paths are never moved: tool-change purge towers, and visible top surfaces
+  // feature types whose paths are never moved: tool-change purge towers, brims and skirts (their rings
+  // are laid down in a set order), and visible top surfaces
   // (their line order, often monotonic, and the slicer's turnarounds between lines shape the finish)
-  const FIXED_RE = /prime tower|wipe tower|PRIME-TOWER|top surface|top solid infill|ironing/i;
+  const FIXED_RE = /prime tower|wipe tower|PRIME-TOWER|skirt|brim|top surface|top solid infill|ironing/i;
   // commands that only set parameters; anything else between moves (macros, probing, conditional
   // blocks like Bambu's M622/M623, waits) must keep its surrounding moves untouched
   // feature types that may be mixed with each other if the user allows it (not bridges, overhangs, supports, brim)
@@ -341,6 +342,14 @@ const OPT = (() => {
     return { mode: 'orig', entry: ch.start, exit: ch.end };
   }
 
+  // two loops of similar length, one inside the other: rings around the same shape (e.g. concentric walls)
+  function concentric(a, b) {
+    const [big, small] = a.len >= b.len ? [a, b] : [b, a];
+    if (!big.closed || !small.closed || small.len < 0.7 * big.len) return false;
+    const m = 0.5, B = big.bbox, S = small.bbox;
+    return S[0] >= B[0] - m && S[1] >= B[1] - m && S[2] <= B[2] + m && S[3] <= B[3] + m;
+  }
+
   function assignDetours(chains, o, prefer) {
     const hostMap = new Map(), isDetour = new Set(), isHost = new Set();
     const sorted = chains.slice().sort((a, b) => a.len - b.len);
@@ -349,6 +358,8 @@ const OPT = (() => {
       let best = null;
       for (const H of chains) {
         if (H === X || !H.closed || isDetour.has(H) || (H.len <= X.len && H !== prefer)) continue;
+        // a ring around the same shape is not an island: it would be printed halfway through its neighbour
+        if (concentric(H, X)) continue;
         // bounding boxes too far apart for a detour
         const gx = Math.max(H.bbox[0] - X.bbox[2], X.bbox[0] - H.bbox[2], 0), gy = Math.max(H.bbox[1] - X.bbox[3], X.bbox[1] - H.bbox[3], 0);
         if (Math.hypot(gx, gy) * (X.closed ? 2 : 1) > o.detourMax) continue;

@@ -19,7 +19,7 @@ Slicers often start a new layer far away from where the previous one ended, or t
 - **Walls and infill can be mixed (optional, off by default).** From layer 2 on, walls and infill may be printed in any order if that saves travel, e.g. infill as a detour from a wall. This changes the print order: infill can be printed before the wall it touches. Bridges, overhangs, top surfaces and supports are not mixed.
 - **Layer-change retraction can be skipped (optional)** when the move to the next layer is very short.
 
-Geometry, extrusion amounts, speeds and (unless mixing is enabled) the order of feature types stay the same. Only start points and the order of paths change. A layer is only rewritten if its travels get shorter, and anything the tool does not understand is left untouched.
+Geometry, extrusion amounts and speeds stay the same. Feature types keep their order, unless mixing is enabled, except that small wall loops (up to 10 mm) can be printed as a detour from a neighbouring wall. Only start points and the order of paths change. A layer is only rewritten if its travels get shorter, and anything the tool does not understand is left untouched.
 
 Where two paths keep their order, the slicer's own moves between them (wipes, Z hop, turnarounds) are kept exactly as written. Top surfaces, ironing, brims, skirts and prime/wipe towers are never reordered, so monotonic top surfaces look the same as before. Firmware macros (tool changes, nozzle camera, timelapse) stay in place together with the paths around them.
 
@@ -93,7 +93,7 @@ Alles läuft lokal im Browser. Deine Dateien werden nirgends hochgeladen. Das ga
 - **Wände und Infill mischen (optional, standardmässig aus):** Ab Layer 2 dürfen Wände und Infill in beliebiger Reihenfolge gedruckt werden, wenn das Travel spart, z.B. Infill als Abstecher von einer Wand. Das ändert die Druckreihenfolge: Infill kann vor der Wand gedruckt werden, die es berührt. Bridges, Overhangs, Top Surfaces und Support werden nicht gemischt.
 - **Retract beim Layerwechsel weglassen (optional),** wenn der Weg zum nächsten Layer sehr kurz ist.
 
-Geometrie, Extrusionsmengen, Geschwindigkeiten und (ohne Mischen) die Reihenfolge der Feature-Typen bleiben gleich. Es ändern sich nur Startpunkte und die Reihenfolge der Pfade. Ein Layer wird nur umgeschrieben, wenn seine Travels kürzer werden, und alles, was das Tool nicht versteht, bleibt unverändert.
+Geometrie, Extrusionsmengen und Geschwindigkeiten bleiben gleich. Die Feature-Typen behalten ohne Mischen ihre Reihenfolge, ausser dass kleine Wand-Loops (bis 10 mm) als Abstecher von einer benachbarten Wand gedruckt werden können. Es ändern sich nur Startpunkte und die Reihenfolge der Pfade. Ein Layer wird nur umgeschrieben, wenn seine Travels kürzer werden, und alles, was das Tool nicht versteht, bleibt unverändert.
 
 Wo zwei Pfade ihre Reihenfolge behalten, bleiben die Moves des Slicers dazwischen (Wipes, Z-Hop, Wendemanöver) genau so, wie er sie geschrieben hat. Top Surfaces, Ironing, Brims, Skirts und Prime/Wipe Tower werden nie umsortiert, monotone Oberflächen sehen also gleich aus wie vorher. Firmware-Makros (Werkzeugwechsel, Düsenkamera, Timelapse) bleiben zusammen mit den Pfaden drumherum an ihrem Platz.
 

@@ -24,6 +24,10 @@ const OPT = (() => {
   // feature types that may be mixed with each other if the user allows it (not bridges, overhangs, supports, brim)
   const MIX_RE = /perimeter|wall|infill|gap fill|FILL|SKIN/i, NO_MIX_RE = /bridge|overhang|support|skirt|brim|custom|top/i;
   const mixable = (ch) => MIX_RE.test(ch.ftype || '') && !NO_MIX_RE.test(ch.ftype || '');
+  // never removed as a short extrusion (top surfaces keep their order, but a tiny stray piece may go)
+  const KEEP_RE = /prime tower|wipe tower|PRIME-TOWER|skirt|brim/i;
+  // small wall loops up to this length (mm) may be printed as a detour from a wall of another type
+  const WALL_RE = /perimeter|wall/i, WALL_ISLAND_MAX = 10;
   const HARMLESS_RE = /^\s*(M7[34]|M10[67]|M20[1-5]|M22[01]|M486|M900|M991|G17|G9[02])\b/i;
   const isHarmless = (tk) => tk.t !== 'other' && tk.t !== 'bad' || HARMLESS_RE.test(tk.raw);
   // layer markers, in order of preference (a file may contain several kinds)
@@ -285,7 +289,7 @@ const OPT = (() => {
       ch.blockDist = bd;
       // a firmware macro with its own moves (tool change, parking, ...) between two paths:
       // both neighbours stay where they are so the macro can be kept exactly as written
-      if (macro && moves) { chains[k - 1].fixed = true; ch.fixed = true; }
+      if (macro && moves) { chains[k - 1].fixed = chains[k - 1].pinned = true; ch.fixed = ch.pinned = true; }
       const prevC = chains[k - 1];
       // a change of feature type ends a run, unless the user allows mixing these types (never on the first layer)
       if (typeChange && !(o.mixFeatures && li > 0 && !ch.fixed && !prevC.fixed && mixable(ch) && mixable(prevC))) boundary = true;
@@ -301,7 +305,7 @@ const OPT = (() => {
     const res = { chains, runs, layerZ, headerEnd: chains[0].si, footerStart: chains[chains.length - 1].ei + 1, removed: [], tailLead: [] };
     // drop short stand-alone extrusions; their state lines move to the next kept chain
     if (o.removeShort > 0) {
-      const short = (ch) => ch.len < o.removeShort && !ch.fixed;
+      const short = (ch) => ch.len < o.removeShort && !ch.pinned && !KEEP_RE.test(ch.ftype || '');
       const keep = chains.filter(ch => !short(ch));
       if (keep.length && keep.length < chains.length) {
         let carry = [];
@@ -324,6 +328,7 @@ const OPT = (() => {
         keep[0].lead = [];
       }
     }
+    res.detourRuns = li > 0 ? crossWallRuns(res.runs, o) : res.runs;
     return res;
   }
 
@@ -350,7 +355,54 @@ const OPT = (() => {
     return S[0] >= B[0] - m && S[1] >= B[1] - m && S[2] <= B[2] + m && S[3] <= B[3] + m;
   }
 
+  // can X be printed as a short detour from the closed loop H?
+  function detourReach(X, H, o) {
+    const gx = Math.max(H.bbox[0] - X.bbox[2], X.bbox[0] - H.bbox[2], 0), gy = Math.max(H.bbox[1] - X.bbox[3], X.bbox[1] - H.bbox[3], 0);
+    if (Math.hypot(gx, gy) * (X.closed ? 2 : 1) > o.detourMax) return false;
+    if (X.closed) return X.segs.some(sg => 2 * nearestOnChain(H, sg.a).d + X.gap <= o.detourMax);
+    for (const [en, ex] of [[X.start, X.end], [X.end, X.start]]) {
+      const nq = nearestOnChain(H, en);
+      if (nq.d + dist(ex, nq.pt) <= o.detourMax) return true;
+    }
+    return false;
+  }
+
+  // Inner and outer walls are separate runs, so a tiny inner loop at one end of a part costs a trip
+  // across it even when it touches the outer wall. Such loops join the neighbouring wall run if a
+  // loop there can take them as a detour.
+  function crossWallRuns(runs, o) {
+    const isWall = (c) => !c.fixed && WALL_RE.test(c.ftype || '') && !NO_MIX_RE.test(c.ftype || '');
+    const canHost = (H, X) => H !== X && isWall(H) && H.closed && H.len > X.len && !concentric(H, X) && detourReach(X, H, o);
+    const out = runs.map(r => { const c = r.slice(); c.lead = r.lead; return c; });
+    let moved = false;
+    for (let i = 0; i < out.length; i++) {
+      for (const X of out[i].slice()) {
+        if (!isWall(X) || X.len > WALL_ISLAND_MAX || out[i].some(H => canHost(H, X))) continue;
+        for (const j of [i + 1, i - 1]) {
+          const T = out[j];
+          if (T && T.some(H => canHost(H, X))) {
+            out[i].splice(out[i].indexOf(X), 1);
+            T.push(X);
+            moved = true;
+            break;
+          }
+        }
+      }
+    }
+    if (!moved) return runs;
+    // emptied runs hand their state lines to the next run
+    const res = [];
+    let pend = [];
+    for (const r of out) {
+      const l = pend.concat(r.lead || []);
+      if (r.length) { r.lead = l; pend = []; res.push(r); } else pend = l;
+    }
+    if (pend.length && res.length) { const last = res[res.length - 1]; last.lead = (last.lead || []).concat(pend); }
+    return res;
+  }
+
   function assignDetours(chains, o, prefer) {
+
     const hostMap = new Map(), isDetour = new Set(), isHost = new Set();
     const sorted = chains.slice().sort((a, b) => a.len - b.len);
     for (const X of sorted) {
@@ -388,7 +440,7 @@ const OPT = (() => {
   function buildPlan(L, startPos, o, greedy, detours, improve) {
     let pos = startPos;
     const items = [];
-    for (const run of L.runs) {
+    for (const run of (detours ? L.detourRuns : L.runs)) {
       if (run.some(c => c.fixed)) {
         // runs with prime / wipe tower paths: original order and start points
         for (const ch of run) items.push({ chain: ch, mode: 'orig', entry: ch.start, exit: ch.end, detours: [] });

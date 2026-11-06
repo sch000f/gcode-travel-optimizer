@@ -12,6 +12,7 @@ All changes to the tool, newest first.
 - Large files run about 10x faster, thanks to a bounding-box check in the detour search. ([18c7efa](https://github.com/sch000f/gcode-travel-optimizer/commit/18c7efa))
 
 ### Fixed
+- Brim rings were printed out of order: a ring was started, the next ring printed as a detour, and the first one finished afterwards. Brims and skirts now keep the slicer's order, and rings around the same shape (e.g. concentric walls) are no longer treated as islands. ([c154032](https://github.com/sch000f/gcode-travel-optimizer/commit/c154032))
 - Misplaced feature-type comments: when paths were reordered, some were labelled with the wrong feature (e.g. infill as "External perimeter"). Optimizing such a file a second time could then mix walls and infill by accident. ([18c7efa](https://github.com/sch000f/gcode-travel-optimizer/commit/18c7efa))
 - The hint of "Skip retraction on layer change" pointed to a value "on the left" that is no longer there. ([83c431a](https://github.com/sch000f/gcode-travel-optimizer/commit/83c431a))
 

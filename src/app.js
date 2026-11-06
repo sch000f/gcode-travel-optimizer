@@ -16,8 +16,9 @@
       o_reverse: 'Reverse open paths', o_reverse_d: 'Open paths (infill, gap fill) may be printed starting from their other end.',
       o_minret: 'No retraction on new travels shorter than', o_minret_d: 'Taken from the slicer settings (retract_before_travel) if available.',
       o_mix: 'Mix walls and infill', o_mix_d: 'Walls and infill may be printed in any order (from layer 2 on) if that saves travel, e.g. infill as a detour from a wall. Saves more, but changes the print order: infill can be printed before the wall it touches. Bridges, overhangs, top surfaces and supports are not mixed.',
+      o_improve: 'Refine path order', o_improve_d: 'After sorting by nearest path, also tries reversing sections and moving paths elsewhere (2-opt / Or-opt). Helps most on complex parts with many paths per layer.',
       o_compact: 'Streamline layer changes', o_compact_d: 'If the new layer starts right next to the end of the previous one, the slicer’s lift and travel moves are merged into one short ramp move. Retraction and Z hop are dropped if the slicer only added them for a long travel that no longer exists.',
-      o_droplr: 'Skip retraction on layer change', o_droplr_d: 'Only if the travel to the new layer is shorter than the value on the left.',
+      o_droplr: 'Skip retraction on layer change', o_droplr_d: 'Only if the travel to the new layer is shorter than the value set under "No retraction on new travels shorter than".',
       advanced: 'Advanced',
       o_close: 'A loop counts as closed if its gap is ≤', o_gain: 'Only change a layer if it saves at least',
       o_rotmin: 'Only move a loop start if it gains at least', o_pen: 'Penalty per travel (prefers fewer travels)',
@@ -57,8 +58,9 @@
       o_reverse: 'Offene Pfade umkehren', o_reverse_d: 'Nicht geschlossene Pfade (Infill, Gap Fill) dürfen vom anderen Ende her gedruckt werden.',
       o_minret: 'Kein Retract bei neuen Travels unter', o_minret_d: 'Wird aus den Slicer-Einstellungen übernommen (retract_before_travel), falls vorhanden.',
       o_mix: 'Wände und Infill mischen', o_mix_d: 'Wände und Infill dürfen ab Layer 2 in beliebiger Reihenfolge gedruckt werden, wenn das Travel spart, z.B. Infill als Abstecher von einer Wand. Spart mehr, ändert aber die Druckreihenfolge: Infill kann vor der Wand gedruckt werden, die es berührt. Bridges, Overhangs, Top Surfaces und Support werden nicht gemischt.',
+      o_improve: 'Pfad-Reihenfolge verfeinern', o_improve_d: 'Nach dem Sortieren nach dem nächsten Pfad werden auch Abschnitte umgedreht und Pfade verschoben (2-opt / Or-opt). Hilft vor allem bei komplexen Teilen mit vielen Pfaden pro Layer.',
       o_compact: 'Layerwechsel straffen', o_compact_d: 'Beginnt der neue Layer direkt neben dem Ende des vorherigen, werden die Hub- und Travel-Moves des Slicers zu einem kurzen Rampen-Move zusammengefasst. Retract und Z-Hop entfallen, wenn der Slicer sie nur für einen langen Travel eingefügt hatte, den es nicht mehr gibt.',
-      o_droplr: 'Retract beim Layerwechsel weglassen', o_droplr_d: 'Nur wenn der Travel zum neuen Layer kürzer als der Wert links ist.',
+      o_droplr: 'Retract beim Layerwechsel weglassen', o_droplr_d: 'Nur wenn der Travel zum neuen Layer kürzer ist als der Wert bei «Kein Retract bei neuen Travels unter».',
       advanced: 'Erweitert',
       o_close: 'Loop gilt als geschlossen bei Lücke ≤', o_gain: 'Layer nur ändern, wenn Ersparnis ≥',
       o_rotmin: 'Loop-Start nur verschieben ab Gewinn von', o_pen: 'Strafkosten pro Travel (bevorzugt weniger Travels)',
@@ -191,7 +193,7 @@
   function options() {
     return {
       rotate: $('o_rotate').checked, detours: $('o_detours').checked, reorder: $('o_reorder').checked,
-      reverse: $('o_reverse').checked, dropLayerRetract: $('o_dropLayerRetract').checked, compactLayerChange: $('o_compact').checked, mixFeatures: $('o_mix').checked,
+      reverse: $('o_reverse').checked, dropLayerRetract: $('o_dropLayerRetract').checked, compactLayerChange: $('o_compact').checked, improve: $('o_improve').checked, mixFeatures: $('o_mix').checked,
       detourMax: num('o_detourMax'), removeShort: num('o_removeShort'), minRetract: num('o_minRetract'), closeTol: num('o_closeTol'),
       minGain: num('o_minGain'), rotateMin: num('o_rotateMin'), travelPenalty: num('o_penalty'),
     };

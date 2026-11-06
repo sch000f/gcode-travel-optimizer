@@ -374,7 +374,7 @@ const OPT = (() => {
     return { hostMap, isDetour };
   }
 
-  function buildPlan(L, startPos, o, greedy, detours) {
+  function buildPlan(L, startPos, o, greedy, detours, improve) {
     let pos = startPos;
     const items = [];
     for (const run of L.runs) {
@@ -392,7 +392,7 @@ const OPT = (() => {
       }
       const { hostMap, isDetour } = detours ? assignDetours(run, o, prefer) : { hostMap: new Map(), isDetour: new Set() };
       const rem = run.filter(c => !isDetour.has(c));
-      const firstIdx = items.length;
+      const firstIdx = items.length, runStart = pos;
       let firstOfRun = true;
       while (rem.length) {
         let pick = 0, be = bestEntry(rem[0], pos, o);
@@ -407,9 +407,86 @@ const OPT = (() => {
         pos = be.exit;
         firstOfRun = false;
       }
+      if (improve && items.length - firstIdx > 2) {
+        const seq = items.splice(firstIdx).map(it => ({ chain: it.chain, detours: it.detours, rev: it.mode === 'rev' }));
+        const w = improveOrder(seq, runStart, o, improve);
+        items.push(...w.items);
+        pos = w.end;
+      }
       if (items[firstIdx]) items[firstIdx].runLead = run.lead;
     }
     return items;
+  }
+
+  // ---- local search on top of nearest neighbour: 2-opt (reverse a section, which also flips the
+  // direction of open paths in it) and Or-opt (move 1-3 consecutive paths elsewhere, either direction).
+  // Candidates are screened with the current end points and confirmed by re-walking the sequence. ----
+  function walkOrder(seq, pos, o) {
+    let cost = 0, prev = null;
+    const items = [];
+    for (const s of seq) {
+      const ch = s.chain;
+      let it;
+      if (ch.closed) it = Object.assign({ chain: ch, detours: s.detours }, bestEntry(ch, pos, o));
+      else if (s.rev && o.reverse) it = { chain: ch, detours: s.detours, mode: 'rev', entry: ch.end, exit: ch.start };
+      else it = { chain: ch, detours: s.detours, mode: 'orig', entry: ch.start, exit: ch.end };
+      const keep = prev && ch.prev === prev.chain && ch.block && it.mode === 'orig' && prev.mode === 'orig' && !(prev.detours && prev.detours.length);
+      const d = keep ? ch.blockDist : dist(pos, it.entry);
+      cost += d + (d >= 0.05 ? o.travelPenalty : 0);
+      items.push(it);
+      pos = it.exit;
+      prev = it;
+    }
+    return { cost, items, end: pos };
+  }
+
+  function improveOrder(seq, start, o, deadline) {
+    let best = walkOrder(seq, start, o);
+    const flipSeg = (s) => s.slice().reverse().map(x => ({ chain: x.chain, detours: x.detours, rev: !x.rev }));
+    const tryCand = (cand) => {
+      const w = walkOrder(cand, start, o);
+      if (w.cost < best.cost - 1e-6) { seq = cand; best = w; return true; }
+      return false;
+    };
+    let improved = true;
+    while (improved && performance.now() < deadline) {
+      improved = false;
+      const n = seq.length, P = best.items;
+      const before = (i) => i === 0 ? start : P[i - 1].exit;
+      // 2-opt
+      for (let i = 0; i < n - 1 && !improved; i++) {
+        if (performance.now() > deadline) break;
+        const a = before(i);
+        for (let j = i + 1; j < n && !improved; j++) {
+          const b = j + 1 < n ? P[j + 1].entry : null;
+          const oldC = dist(a, P[i].entry) + (b ? dist(P[j].exit, b) : 0);
+          const newC = dist(a, P[j].exit) + (b ? dist(P[i].entry, b) : 0);
+          if (newC < oldC - 1e-6) improved = tryCand(seq.slice(0, i).concat(flipSeg(seq.slice(i, j + 1)), seq.slice(j + 1)));
+        }
+      }
+      // Or-opt
+      for (let len = 1; len <= 3 && !improved; len++) {
+        for (let i = 0; i + len <= n && !improved; i++) {
+          if (performance.now() > deadline) break;
+          const segS = P[i].entry, segE = P[i + len - 1].exit;
+          const a = before(i), b = i + len < n ? P[i + len].entry : null;
+          const gain = dist(a, segS) + (b ? dist(segE, b) : 0) - (b ? dist(a, b) : 0);
+          if (gain < 1e-6) continue;
+          const rest = seq.slice(0, i).concat(seq.slice(i + len));
+          const RP = P.slice(0, i).concat(P.slice(i + len));
+          for (let k = 0; k <= rest.length && !improved; k++) {
+            if (k === i) continue;
+            const pa = k === 0 ? start : RP[k - 1].exit, pb = k < RP.length ? RP[k].entry : null;
+            const base = pb ? dist(pa, pb) : 0;
+            const fwd = dist(pa, segS) + (pb ? dist(segE, pb) : 0) - base;
+            const rev = dist(pa, segE) + (pb ? dist(segS, pb) : 0) - base;
+            if (fwd < gain - 1e-6) improved = tryCand(rest.slice(0, k).concat(seq.slice(i, i + len), rest.slice(k)));
+            if (!improved && rev < gain - 1e-6) improved = tryCand(rest.slice(0, k).concat(flipSeg(seq.slice(i, i + len)), rest.slice(k)));
+          }
+        }
+      }
+    }
+    return best;
   }
 
   // ---- emission (also used as dry run for cost) ----
@@ -675,14 +752,16 @@ const OPT = (() => {
         const combos = [[false, false]];
         if (o.reorder) combos.push([true, false]);
         if (o.detours) for (const dm of [1, 2]) { combos.push([false, dm]); if (o.reorder) combos.push([true, dm]); }
-        for (const [g, d] of combos) {
-          const items = buildPlan(L, startPos, o, g, d);
+        if (o.reorder && o.improve) for (const c of combos.slice()) if (c[0]) combos.push([true, c[1], true]);
+        for (const [g, d, imp] of combos) {
+          const items = buildPlan(L, startPos, o, g, d, imp ? performance.now() + (o.improveMs || 80) : 0);
           const D = { dry: true, pos: startPos, f: S.f, z: L.layerZ, accel: S.accel, ftype: S.ftype, params, o, cost: 0, dist: 0, nTrav: 0, nRetr: 0, e: 0 };
           const d0 = dist(startPos, items[0].entry);
           D.cost += d0 + (d0 >= 0.05 ? o.travelPenalty : 0); D.dist += d0; if (d0 >= 0.05) D.nTrav++;
           D.pos = items[0].entry;
           emitPlan(D, items);
-          if (!best || D.cost < best.D.cost - 1e-9) best = { D, items };
+          // a refined order must clearly win: a tiny gain is not worth moving where the layer ends
+          if (!best || D.cost < best.D.cost - (imp ? o.minGain : 1e-9)) best = { D, items };
         }
         const nRem = L.removed.length;
         if (nRem || best.D.cost < oc - o.minGain) {

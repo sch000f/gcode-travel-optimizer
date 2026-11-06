@@ -110,6 +110,7 @@ a { color: var(--accent); }
         <small data-i18n="o_remove_d"></small></span></label>
       <label class="opt"><input type="checkbox" id="o_reorder" checked><span><span data-i18n="o_reorder"></span><small data-i18n="o_reorder_d"></small></span></label>
       <label class="opt"><input type="checkbox" id="o_reverse" checked><span><span data-i18n="o_reverse"></span><small data-i18n="o_reverse_d"></small></span></label>
+      <label class="opt"><input type="checkbox" id="o_improve" checked><span><span data-i18n="o_improve"></span><small data-i18n="o_improve_d"></small></span></label>
       <label class="opt"><span class="indent"><span data-i18n="o_minret"></span> <input type="number" id="o_minRetract" value="1.5" step="0.1" min="0"> mm<small data-i18n="o_minret_d"></small></span></label>
       <label class="opt"><input type="checkbox" id="o_mix"><span><span data-i18n="o_mix"></span><small data-i18n="o_mix_d"></small></span></label>
       <label class="opt"><input type="checkbox" id="o_compact" checked><span><span data-i18n="o_compact"></span><small data-i18n="o_compact_d"></small></span></label>
@@ -764,7 +765,7 @@ const OPT = (() => {
     return { hostMap, isDetour };
   }
 
-  function buildPlan(L, startPos, o, greedy, detours) {
+  function buildPlan(L, startPos, o, greedy, detours, improve) {
     let pos = startPos;
     const items = [];
     for (const run of L.runs) {
@@ -782,7 +783,7 @@ const OPT = (() => {
       }
       const { hostMap, isDetour } = detours ? assignDetours(run, o, prefer) : { hostMap: new Map(), isDetour: new Set() };
       const rem = run.filter(c => !isDetour.has(c));
-      const firstIdx = items.length;
+      const firstIdx = items.length, runStart = pos;
       let firstOfRun = true;
       while (rem.length) {
         let pick = 0, be = bestEntry(rem[0], pos, o);
@@ -797,9 +798,86 @@ const OPT = (() => {
         pos = be.exit;
         firstOfRun = false;
       }
+      if (improve && items.length - firstIdx > 2) {
+        const seq = items.splice(firstIdx).map(it => ({ chain: it.chain, detours: it.detours, rev: it.mode === 'rev' }));
+        const w = improveOrder(seq, runStart, o, improve);
+        items.push(...w.items);
+        pos = w.end;
+      }
       if (items[firstIdx]) items[firstIdx].runLead = run.lead;
     }
     return items;
+  }
+
+  // ---- local search on top of nearest neighbour: 2-opt (reverse a section, which also flips the
+  // direction of open paths in it) and Or-opt (move 1-3 consecutive paths elsewhere, either direction).
+  // Candidates are screened with the current end points and confirmed by re-walking the sequence. ----
+  function walkOrder(seq, pos, o) {
+    let cost = 0, prev = null;
+    const items = [];
+    for (const s of seq) {
+      const ch = s.chain;
+      let it;
+      if (ch.closed) it = Object.assign({ chain: ch, detours: s.detours }, bestEntry(ch, pos, o));
+      else if (s.rev && o.reverse) it = { chain: ch, detours: s.detours, mode: 'rev', entry: ch.end, exit: ch.start };
+      else it = { chain: ch, detours: s.detours, mode: 'orig', entry: ch.start, exit: ch.end };
+      const keep = prev && ch.prev === prev.chain && ch.block && it.mode === 'orig' && prev.mode === 'orig' && !(prev.detours && prev.detours.length);
+      const d = keep ? ch.blockDist : dist(pos, it.entry);
+      cost += d + (d >= 0.05 ? o.travelPenalty : 0);
+      items.push(it);
+      pos = it.exit;
+      prev = it;
+    }
+    return { cost, items, end: pos };
+  }
+
+  function improveOrder(seq, start, o, deadline) {
+    let best = walkOrder(seq, start, o);
+    const flipSeg = (s) => s.slice().reverse().map(x => ({ chain: x.chain, detours: x.detours, rev: !x.rev }));
+    const tryCand = (cand) => {
+      const w = walkOrder(cand, start, o);
+      if (w.cost < best.cost - 1e-6) { seq = cand; best = w; return true; }
+      return false;
+    };
+    let improved = true;
+    while (improved && performance.now() < deadline) {
+      improved = false;
+      const n = seq.length, P = best.items;
+      const before = (i) => i === 0 ? start : P[i - 1].exit;
+      // 2-opt
+      for (let i = 0; i < n - 1 && !improved; i++) {
+        if (performance.now() > deadline) break;
+        const a = before(i);
+        for (let j = i + 1; j < n && !improved; j++) {
+          const b = j + 1 < n ? P[j + 1].entry : null;
+          const oldC = dist(a, P[i].entry) + (b ? dist(P[j].exit, b) : 0);
+          const newC = dist(a, P[j].exit) + (b ? dist(P[i].entry, b) : 0);
+          if (newC < oldC - 1e-6) improved = tryCand(seq.slice(0, i).concat(flipSeg(seq.slice(i, j + 1)), seq.slice(j + 1)));
+        }
+      }
+      // Or-opt
+      for (let len = 1; len <= 3 && !improved; len++) {
+        for (let i = 0; i + len <= n && !improved; i++) {
+          if (performance.now() > deadline) break;
+          const segS = P[i].entry, segE = P[i + len - 1].exit;
+          const a = before(i), b = i + len < n ? P[i + len].entry : null;
+          const gain = dist(a, segS) + (b ? dist(segE, b) : 0) - (b ? dist(a, b) : 0);
+          if (gain < 1e-6) continue;
+          const rest = seq.slice(0, i).concat(seq.slice(i + len));
+          const RP = P.slice(0, i).concat(P.slice(i + len));
+          for (let k = 0; k <= rest.length && !improved; k++) {
+            if (k === i) continue;
+            const pa = k === 0 ? start : RP[k - 1].exit, pb = k < RP.length ? RP[k].entry : null;
+            const base = pb ? dist(pa, pb) : 0;
+            const fwd = dist(pa, segS) + (pb ? dist(segE, pb) : 0) - base;
+            const rev = dist(pa, segE) + (pb ? dist(segS, pb) : 0) - base;
+            if (fwd < gain - 1e-6) improved = tryCand(rest.slice(0, k).concat(seq.slice(i, i + len), rest.slice(k)));
+            if (!improved && rev < gain - 1e-6) improved = tryCand(rest.slice(0, k).concat(flipSeg(seq.slice(i, i + len)), rest.slice(k)));
+          }
+        }
+      }
+    }
+    return best;
   }
 
   // ---- emission (also used as dry run for cost) ----
@@ -1065,14 +1143,16 @@ const OPT = (() => {
         const combos = [[false, false]];
         if (o.reorder) combos.push([true, false]);
         if (o.detours) for (const dm of [1, 2]) { combos.push([false, dm]); if (o.reorder) combos.push([true, dm]); }
-        for (const [g, d] of combos) {
-          const items = buildPlan(L, startPos, o, g, d);
+        if (o.reorder && o.improve) for (const c of combos.slice()) if (c[0]) combos.push([true, c[1], true]);
+        for (const [g, d, imp] of combos) {
+          const items = buildPlan(L, startPos, o, g, d, imp ? performance.now() + (o.improveMs || 80) : 0);
           const D = { dry: true, pos: startPos, f: S.f, z: L.layerZ, accel: S.accel, ftype: S.ftype, params, o, cost: 0, dist: 0, nTrav: 0, nRetr: 0, e: 0 };
           const d0 = dist(startPos, items[0].entry);
           D.cost += d0 + (d0 >= 0.05 ? o.travelPenalty : 0); D.dist += d0; if (d0 >= 0.05) D.nTrav++;
           D.pos = items[0].entry;
           emitPlan(D, items);
-          if (!best || D.cost < best.D.cost - 1e-9) best = { D, items };
+          // a refined order must clearly win: a tiny gain is not worth moving where the layer ends
+          if (!best || D.cost < best.D.cost - (imp ? o.minGain : 1e-9)) best = { D, items };
         }
         const nRem = L.removed.length;
         if (nRem || best.D.cost < oc - o.minGain) {
@@ -1231,8 +1311,9 @@ const OPT = (() => {
       o_reverse: 'Reverse open paths', o_reverse_d: 'Open paths (infill, gap fill) may be printed starting from their other end.',
       o_minret: 'No retraction on new travels shorter than', o_minret_d: 'Taken from the slicer settings (retract_before_travel) if available.',
       o_mix: 'Mix walls and infill', o_mix_d: 'Walls and infill may be printed in any order (from layer 2 on) if that saves travel, e.g. infill as a detour from a wall. Saves more, but changes the print order: infill can be printed before the wall it touches. Bridges, overhangs, top surfaces and supports are not mixed.',
+      o_improve: 'Refine path order', o_improve_d: 'After sorting by nearest path, also tries reversing sections and moving paths elsewhere (2-opt / Or-opt). Helps most on complex parts with many paths per layer.',
       o_compact: 'Streamline layer changes', o_compact_d: 'If the new layer starts right next to the end of the previous one, the slicer’s lift and travel moves are merged into one short ramp move. Retraction and Z hop are dropped if the slicer only added them for a long travel that no longer exists.',
-      o_droplr: 'Skip retraction on layer change', o_droplr_d: 'Only if the travel to the new layer is shorter than the value on the left.',
+      o_droplr: 'Skip retraction on layer change', o_droplr_d: 'Only if the travel to the new layer is shorter than the value set under "No retraction on new travels shorter than".',
       advanced: 'Advanced',
       o_close: 'A loop counts as closed if its gap is ≤', o_gain: 'Only change a layer if it saves at least',
       o_rotmin: 'Only move a loop start if it gains at least', o_pen: 'Penalty per travel (prefers fewer travels)',
@@ -1272,8 +1353,9 @@ const OPT = (() => {
       o_reverse: 'Offene Pfade umkehren', o_reverse_d: 'Nicht geschlossene Pfade (Infill, Gap Fill) dürfen vom anderen Ende her gedruckt werden.',
       o_minret: 'Kein Retract bei neuen Travels unter', o_minret_d: 'Wird aus den Slicer-Einstellungen übernommen (retract_before_travel), falls vorhanden.',
       o_mix: 'Wände und Infill mischen', o_mix_d: 'Wände und Infill dürfen ab Layer 2 in beliebiger Reihenfolge gedruckt werden, wenn das Travel spart, z.B. Infill als Abstecher von einer Wand. Spart mehr, ändert aber die Druckreihenfolge: Infill kann vor der Wand gedruckt werden, die es berührt. Bridges, Overhangs, Top Surfaces und Support werden nicht gemischt.',
+      o_improve: 'Pfad-Reihenfolge verfeinern', o_improve_d: 'Nach dem Sortieren nach dem nächsten Pfad werden auch Abschnitte umgedreht und Pfade verschoben (2-opt / Or-opt). Hilft vor allem bei komplexen Teilen mit vielen Pfaden pro Layer.',
       o_compact: 'Layerwechsel straffen', o_compact_d: 'Beginnt der neue Layer direkt neben dem Ende des vorherigen, werden die Hub- und Travel-Moves des Slicers zu einem kurzen Rampen-Move zusammengefasst. Retract und Z-Hop entfallen, wenn der Slicer sie nur für einen langen Travel eingefügt hatte, den es nicht mehr gibt.',
-      o_droplr: 'Retract beim Layerwechsel weglassen', o_droplr_d: 'Nur wenn der Travel zum neuen Layer kürzer als der Wert links ist.',
+      o_droplr: 'Retract beim Layerwechsel weglassen', o_droplr_d: 'Nur wenn der Travel zum neuen Layer kürzer ist als der Wert bei «Kein Retract bei neuen Travels unter».',
       advanced: 'Erweitert',
       o_close: 'Loop gilt als geschlossen bei Lücke ≤', o_gain: 'Layer nur ändern, wenn Ersparnis ≥',
       o_rotmin: 'Loop-Start nur verschieben ab Gewinn von', o_pen: 'Strafkosten pro Travel (bevorzugt weniger Travels)',
@@ -1406,7 +1488,7 @@ const OPT = (() => {
   function options() {
     return {
       rotate: $('o_rotate').checked, detours: $('o_detours').checked, reorder: $('o_reorder').checked,
-      reverse: $('o_reverse').checked, dropLayerRetract: $('o_dropLayerRetract').checked, compactLayerChange: $('o_compact').checked, mixFeatures: $('o_mix').checked,
+      reverse: $('o_reverse').checked, dropLayerRetract: $('o_dropLayerRetract').checked, compactLayerChange: $('o_compact').checked, improve: $('o_improve').checked, mixFeatures: $('o_mix').checked,
       detourMax: num('o_detourMax'), removeShort: num('o_removeShort'), minRetract: num('o_minRetract'), closeTol: num('o_closeTol'),
       minGain: num('o_minGain'), rotateMin: num('o_rotateMin'), travelPenalty: num('o_penalty'),
     };

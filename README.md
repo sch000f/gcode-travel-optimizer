@@ -1,6 +1,6 @@
 # G-Code Travel Optimizer
 
-**[▶ Open the tool](https://sch000f.github.io/gcode-travel-optimizer/)** · [Deutsch](#deutsch)
+**[▶ Open the tool](https://sch000f.github.io/gcode-travel-optimizer/)** · [Deutsch](#deutsch) · [Changelog](CHANGELOG.md)
 
 A small browser tool that reduces travel moves in sliced G-code, and with them the stringing they cause. It was built for foaming / LW-PLA, which strings badly no matter how the retraction is set up, but it helps with any material that strings (PETG, TPU, …).
 
@@ -76,7 +76,7 @@ Public domain ([Unlicense](LICENSE)). Do whatever you want with it. There is no 
 
 ## Deutsch
 
-**[▶ Tool öffnen](https://sch000f.github.io/gcode-travel-optimizer/)**
+**[▶ Tool öffnen](https://sch000f.github.io/gcode-travel-optimizer/)** · [Changelog](CHANGELOG.md)
 
 Ein kleines Browser-Tool, das Travel-Moves in fertig gesliceten G-Code-Dateien reduziert und damit das Stringing, das sie verursachen. Entstanden ist es für Foaming-/LW-PLA, das unabhängig von den Retract-Einstellungen stark fädelt. Es hilft aber bei jedem Material, das zu Stringing neigt (PETG, TPU, …).
 
